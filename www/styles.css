@@ -1,0 +1,407 @@
+/* www/styles.css */
+
+/* --- Welcome Page --- */
+.welcome-header {
+  display: flex;
+  flex-direction: column; /* Stack items vertically */
+  align-items: center;    /* Center them horizontally */
+  gap: 10px;              /* Adjust the space between logo and title */
+  margin-bottom: 20px;
+}
+
+/* --- General Button Containers --- */
+/* For buttons aligned to the right (e.g., Welcome Next button) */
+.button-container-right {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* For buttons with one on each side (e.g., Back and Next buttons) */
+.button-container-space-between {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+/* This creates a flexible container for the two buttons */
+.photo-input-buttons {
+  display: flex;
+  /* (Optional) Use 'space-between' if you want a gap, or 'space-around' */
+  justify-content: space-between; 
+  gap: 10px; /* This sets the space between the two buttons */
+}
+
+/* Shiny's fileInput is wrapped in a 'form-group'. 
+   This makes each button take up half the available space. */
+.photo-input-buttons .form-group {
+  flex: 1; /* Each button's container will grow equally */
+  margin-bottom: 0; /* Removes extra space below the buttons */
+}
+
+/* This makes the clickable button part fill its container */
+.photo-input-buttons .btn {
+  width: 100%;
+}
+
+.button-container-full-width {
+  display: grid;
+  width: 100%;
+  gap: 10px; /* Provides a nice gap if you ever put two buttons here */
+}
+
+/* Any .btn inside this container becomes full width */
+.button-container-full-width .btn {
+  width: 100% !important;
+  display: block !important;  /* overrides inline-block */
+}
+
+/* And make the Shiny wrapper full width too */
+.button-container-full-width .shiny-input-container {
+  width: 100%;
+  display: block;
+}
+
+.btn-full-width {
+  width: 100% !important;
+  display: block !important;
+}
+
+/* For buttons on the left (e.g., on the Results tab) */
+.button-container-left {
+  display: flex;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0 15px 15px 15px;
+}
+
+/* --- Get ID Page --- */
+/* Style for each row in the PlantNet identification results */
+.id-result-row {
+  border-bottom: 1px solid #eee;
+  padding: 8px 5px;
+  margin-bottom: 5px;
+  border-radius: 5px;
+  transition: background-color 0.2s ease-in-out;
+}
+
+/* Add a subtle highlight when the user hovers over a result row */
+.id-result-row:hover {
+  background-color: #f8f9fa; /* A very light grey */
+}
+
+/* --- Tabs & Tab Content --- */
+
+/* Give the tab strip a bottom border so it joins the panel */
+.nav-tabs {
+  border: none;
+}
+
+/* Base styling for all tab content panes (panel look) */
+.tab-content > .tab-pane {
+  padding: 30px 25px;
+  border: none;
+  border-radius: 8px;           /* all corners rounded */
+  box-shadow: 0 4px 6px rgba(0,0,0,0.04);
+  margin-top: 0;
+}
+
+/* First tab (user_details): square top-left corner only */
+.tab-content > .tab-pane[data-value="user_details"] {
+  border-top-left-radius: 0;
+}
+
+/* 1. User Details tab */
+.nav-tabs .nav-link[data-value="user_details"] {
+  background-color: #e8f5e9;
+  color: #3cbb54
+  border: none;                       /* remove default BS borders */
+  border-bottom: 1px solid #ffffff;   /* underline when NOT active */
+}
+.nav-tabs .nav-link[data-value="user_details"].active {
+  background-color: #e8f5e9;   /* match panel */
+  color: #5a5a5a;
+  border-bottom: 2px solid #e8f5e9;
+}
+.tab-content > .tab-pane[data-value="user_details"] {
+  background-color: #e8f5e9;
+}
+
+/* 2. Get ID tab */
+.nav-tabs .nav-link[data-value="get_id"] {
+  background-color: #e8f5e9;
+  color: #3cbb54
+  border: none;                       /* remove default BS borders */
+  border-bottom: 1px solid #ffffff;   /* underline when NOT active */
+}
+.nav-tabs .nav-link[data-value="get_id"].active {
+  background-color: #e8f5e9;   /* match panel */
+  color: #5a5a5a;
+  border-bottom: 2px solid #e8f5e9;
+}
+
+.tab-content > .tab-pane[data-value="get_id"] {
+  background-color: #e8f5e9;
+}
+
+/* 3. Survey 1 tab */
+.nav-tabs .nav-link[data-value="survey1"] {
+  background-color: #e8f5e9;
+  color: #3cbb54
+  border: none;                       /* remove default BS borders */
+  border-bottom: 1px solid #ffffff;
+}
+.nav-tabs .nav-link[data-value="survey1"].active {
+  background-color: #e8f5e9;   /* match panel */
+  color: #5a5a5a;
+  border-bottom: 2px solid #e8f5e9;
+}
+.tab-content > .tab-pane[data-value="survey1"] {
+  background-color: #e8f5e9;
+}
+
+/* 4. Survey 2 tab */
+.nav-tabs .nav-link[data-value="survey2"] {
+  background-color: #e8f5e9;
+  color: #3cbb54
+  border: none;                       /* remove default BS borders */
+  border-bottom: 1px solid #ffffff;
+}
+.nav-tabs .nav-link[data-value="survey2"].active {
+  background-color: #e8f5e9;   /* match panel */
+  color: #5a5a5a;
+  border-bottom: 2px solid #e8f5e9;
+}
+.tab-content > .tab-pane[data-value="survey2"] {
+  background-color: #e8f5e9;
+}
+
+/* 5. Results tab */
+.nav-tabs .nav-link[data-value="results"] {
+  background-color: #e8f5e9;
+  color: #3cbb54
+  border: none;                       /* remove default BS borders */
+  border-bottom: 1px solid #ffffff;
+}
+.nav-tabs .nav-link[data-value="results"].active {
+  background-color: #e8f5e9;   /* match panel */
+  color: #5a5a5a;
+  border-bottom: 2px solid #e8f5e9;
+}
+.tab-content > .tab-pane[data-value="results"] {
+  background-color: #e8f5e9;
+}
+
+/* --- Footer --- */
+.app-footer {
+  text-align: center; /* Center the text */
+  padding: 20px 0;    /* Add some space above and below */
+  font-size: 0.9em;   /* Make the font slightly smaller */
+  color: #6c757d;     /* A muted grey color for the text */
+}
+
+/* --- Checkboxes --- */
+.inline-checkbox .shiny-input-container {
+  display: inline-block; /* Makes the box only as wide as its content */
+  vertical-align: middle; /* Aligns it nicely with surrounding text if any */
+  margin-bottom: 0; /* Removes extra space below the checkbox */
+}
+
+/* Full-width checkbox variant (for T&Cs text) */
+.fullwidth-checkbox .shiny-input-container {
+  width: 100%;
+  display: block;     /* full-width container */
+}
+
+/* --- Form group with inline labels --- */
+.form-group-inline-label .form-group {
+  /* Turn the input's main container into a flexbox */
+  display: flex;
+  align-items: flex-start; /* Align label top with top of inputs */
+  gap: 15px;             /* Space between the label and the inputs */
+  margin-bottom: 1rem;   /* Standard spacing between questions */
+}
+
+.form-group-inline-label .control-label {
+  /* Allow the label to shrink to its content size */
+  flex: 0 1 40%; /* Flex-grow: 0, Flex-shrink: 1, Basis: 40% width */
+  text-align: right;   /* Align the question text to the right */
+  margin-bottom: 0;    /* Remove default bottom margin */
+  padding-top: 5px;    /* Fine-tune vertical alignment */
+}
+
+.form-group-inline-label .shiny-input-container:not(.shiny-input-container-inline) {
+  /* Allow the input area to grow and fill remaining space */
+  flex: 1 1 60%;
+}
+
+/* --- Box text colour (all wellPanels / cards) --- */
+
+/* Main text colour inside all content boxes */
+.well,
+.card,
+.bslib-card {
+  color: #5a5a5a;  /* dark green, tweak to whatever you like */
+}
+
+/* Make headings inside boxes match */
+.well h1, .well h2, .well h3, .well h4, .well h5, .well h6,
+.card h1, .card h2, .card h3, .card h4, .card h5, .card h6,
+.bslib-card h1, .bslib-card h2, .bslib-card h3, .bslib-card h4, .bslib-card h5, .bslib-card h6 {
+  color: #5a5a5a;
+}
+
+/* Labels and help text inside boxes */
+.well label,
+.well .control-label,
+.well .help-block,
+.card label,
+.card .control-label,
+.card .help-block,
+.bslib-card label,
+.bslib-card .control-label,
+.bslib-card .help-block {
+  color: #5a5a5a;
+}
+
+/* Extra spacing above the image preview card */
+.preview-panel {
+  margin-top: 15px;
+}
+
+/* Nice little box around the location info */
+.location-box {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background-color: rgba(255, 255, 255, 0.7); /* tweak if needed */
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  font-size: 0.9rem;
+  font-family: monospace; /* keeps the verbatim feel, optional */
+}
+
+.location_map_panel {
+  margin-top: 15px;
+}
+
+/* Container for the iNat status pill */
+.inat-status {
+  padding: 0.6rem 0.9rem;
+  border-radius: 999px;
+  text-align: center;
+  font-weight: 600;
+  margin-top: 0.25rem;
+}
+
+/* Disconnected – soft red */
+.inat-status-disconnected {
+  background-color: #f8d7da;
+  color: #721c24;
+  border: 1px solid #f5c6cb;
+}
+
+/* Connected – soft green */
+.inat-status-connected {
+  background-color: #d4edda;
+  color: #155724;
+  border: 1px solid #c3e6cb;
+}
+
+/* Little spacing for the FA icon */
+.inat-status i.fa {
+  margin-right: 0.4rem;
+}
+
+.id-result-row {
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #eee;
+}
+
+.id-thumbnail {
+  max-width: 100%;
+  max-height: 70px;
+  border-radius: 4px;
+  object-fit: cover;
+  box-shadow: 0 0 2px rgba(0,0,0,0.2);
+}
+
+.app-footer {
+  font-size: 0.9rem;
+  color: #555;
+  margin-top: 1rem;
+}
+
+/* Stack text + logo vertically and center */
+.footer-left,
+.footer-right {
+  display: flex;
+  flex-direction: column;   /* vertical stack: text then logo */
+  align-items: center;      /* center horizontally */
+  text-align: center;       /* center the text itself */
+  gap: 0.4rem;
+}
+
+/* Shared logo styling */
+.footer-logo {
+  max-height: 40px;
+  width: auto;
+  display: block;
+}
+
+.admin-tools-inline {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-end; /* align button with bottom of input */
+  flex-wrap: wrap;
+}
+
+.admin-code-wrapper {
+  flex: 1 1 200px; /* grow/shrink nicely */
+}
+
+.admin-sync-wrapper {
+  flex: 0 0 auto;
+}
+
+/* Remove extra bottom margin on inline form group */
+.admin-tools-inline .form-group {
+  margin-bottom: 0;
+}
+
+/* Center the status badge under the connect button */
+.inat-status-container {
+  text-align: center;
+}
+
+/* Base style: button-like pill, 50% width */
+.inat-status {
+  display: block;
+  width: 50%;
+  margin: 0.5rem auto 0;      /* center horizontally */
+  padding: 0.4rem 0.75rem;
+  border-radius: 999px;       /* pill shape */
+  font-size: 0.9rem;
+  font-weight: 500;
+  border: 1px solid transparent;
+}
+
+/* Give the icon a bit of breathing room */
+.inat-status i {
+  margin-right: 0.35rem;
+}
+
+/* Disconnected = subtle red-ish pill */
+.inat-status-disconnected {
+  background-color: #f8d7da;
+  color: #842029;
+  border-color: #f5c2c7;
+}
+
+/* Connected = green like your other success buttons */
+.inat-status-connected {
+  background-color: #198754;  /* bootstrap success green */
+  color: #ffffff;
+  border-color: #198754;
+}
+

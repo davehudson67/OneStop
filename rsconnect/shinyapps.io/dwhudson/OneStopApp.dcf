@@ -1,0 +1,12 @@
+name: OneStopApp
+title: OneStopApp
+username: dwhudson
+account: dwhudson
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 16175216
+bundleId: 11849344
+url: https://dwhudson.shinyapps.io/OneStopApp/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE
