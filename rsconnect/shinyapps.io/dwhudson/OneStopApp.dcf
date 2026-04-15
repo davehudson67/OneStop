@@ -4,9 +4,10 @@ username: dwhudson
 account: dwhudson
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
-appId: 16175216
-bundleId: 11849344
+appId: 17139848
+bundleId: 11854407
 url: https://dwhudson.shinyapps.io/OneStopApp/
 version: 1
 asMultiple: FALSE
 asStatic: FALSE
+ignoredFiles: app_backup.R|app_backup1.R|app_iNat.R|plant_records.db

@@ -3,3 +3,11 @@ INAT_CLIENT_SECRET=MpNgSm5swG5UUKMK1nkc4kP3BdxjiDjf57wMZ6Ccb8I
 INAT_REDIRECT_URI=https://dwhudson.shinyapps.io/OneStopApp/
 INAT_ADMIN_CODE=Badger
 INAT_PROJECT_ID=254569
+
+DB_HOST=quartz-roarer-10164.8nj.gcp-europe-west1.cockroachlabs.cloud
+DB_PORT=26257
+DB_NAME=defaultdb
+DB_USER=drdavehudson
+DB_PASSWORD=E8TzM3aPqlGtCulKBdhcMg
+DB_SSLMODE=verify-full
+DB_SSLROOTCERT=certs/root.crt
