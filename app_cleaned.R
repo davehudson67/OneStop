@@ -107,9 +107,9 @@ PLANTNET_KEY <- if (file.exists(KEY_FILE)) trimws(readr::read_file(KEY_FILE)) el
   if (!is.null(a) && length(a) > 0 && !all(is.na(a))) a else b
 }
 
-translations_path <- "AppTextTranslations.csv"
+translations_path <- "AppTextTranslations_cleaned.csv"
 if (!file.exists(translations_path)) {
-  translations_path <- "AppTextTranslations.xlsx"
+  translations_path <- "AppTextTranslations_cleaned.xlsx"
 }
 
 translations_raw <- if (file.exists(translations_path)) {
@@ -716,16 +716,23 @@ server <- function(input, output, session) {
               p(tr("U_24", "Don’t have an iNaturalist account yet?"), " ", tags$a(tr("U_25", "Create one here"), href = "https://www.inaturalist.org/signup", target = "_blank")),
               p(class = "text-muted", tr("U_26", "You can also continue without connecting – your records will be stored in this project only and not uploaded to iNaturalist.")),
               hr(),
-              p(tr("U_27", "Your data will help us understand the spread of potentially invasive alien species and inform policy in that regard. If you want to get more information on invasive alien species or about the project, please visit"), " ", tags$a("https://onestop-project.eu/", href = "https://onestop-project.eu/", target = "_blank"), "."),
-              br(),
-              p(tags$strong(tr("U_28", "Data policy:")), " ", tr("U_29", "The collected survey data will only be used for research purposes and made available in an open access format. Your survey responses will remain anonymous, but your species records will be associated with your iNaturalist account and will be covered by their terms and conditions.")),
-              br(),
-              p(tr("U_30", "If you want to receive updates about the results, please provide your email address below. This will be stored securely in line with GDPR policies and separate from your survey answers.")),
-              textInput("observer_email", tr("U_31", "Your email address (optional, for project updates)"), value = isolate(input$observer_email %||% "")),
-              br(),
-              p(tr("U_32", "Should you have any questions about the research and data collection, please contact us"), " ", tags$a(tr("U_33", "here"), href = "mailto:d.hudson2@exeter.ac.uk"), "."),
-              br(),
-              p(class = "text-muted", tr("U_34", "OneSTOP receives funding from the European Union’s Horizon Europe Research and Innovation Programme (ID No 101180559). Views and opinions expressed are those of the author(s) only and do not necessarily reflect those of the European Union or the European Research Executive Agency (REA). Neither the EU nor REA can be held responsible for them.")),
+              h4(tr("U_09", "Step 2 – About you (optional)")),
+              p(tr("U_10", "You can optionally share your name and email with the project. This helps us follow up about your records but is not required.")),
+              textInput("observer_name", tr("U_11", "Your name (optional)"), value = isolate(input$observer_name %||% "")),
+              textInput("observer_email", tr("U_12", "Your email address (optional)"), value = isolate(input$observer_email %||% "")),
+              radioButtons(
+                "include_name",
+                tr("U_13", "Can we include your name in our archive of plant records?"),
+                choices = c(tr("UX_YES", "Yes"), tr("U_15", "No, I’d prefer my records to be anonymous")),
+                selected = isolate(input$include_name %||% tr("UX_YES", "Yes")),
+                inline = TRUE
+              ),
+              hr(),
+              h4(tr("U_19", "Terms & conditions")),
+              p(tr("U_20", "Please read the terms and conditions before using the app.")),
+              tags$a(tr("U_21", "Download terms and conditions (PDF)"), href = "terms_and_conditions.pdf", target = "_blank"),
+              br(), br(),
+              div(class = "fullwidth-checkbox", checkboxInput("accept_terms", tr("U_22", "I have read and agree to the terms and conditions"), value = isolate(isTRUE(input$accept_terms)))),
               hr(),
               div(class = "button-container-full-width", actionButton("welcome_next", label = next_label(), class = "btn-full-width"))
             )
@@ -754,7 +761,8 @@ server <- function(input, output, session) {
                 hr(),
                 h4(tr("ID_08", "Location & plant name")),
                 textInput("site_name", tr("ID_09", "Where did you survey? (town/village and site name)"), value = isolate(input$site_name %||% ""), placeholder = tr("ID_10", "e.g., North Meadow, Truro")),
-                                textInput("species_name", tr("ID_13", "Plant name (edit if you disagree with the PlantNet ID)"), value = isolate(input$species_name %||% ""), placeholder = tr("ID_14", "Select from PlantNet results or enter manually")),
+                textInput("grid_cell", tr("ID_11", "Grid cell (optional)"), value = isolate(input$grid_cell %||% ""), placeholder = tr("ID_12", "e.g., SW1234")),
+                textInput("species_name", tr("ID_13", "Plant name (edit if you disagree with the PlantNet ID)"), value = isolate(input$species_name %||% ""), placeholder = tr("ID_14", "Select from PlantNet results or enter manually")),
                 div(
                   class = "button-container-full-width",
                   actionButton("get_location_btn", tr("ID_15", "Use my GPS location"), class = "btn-outline-info btn-full-width", icon = icon("location-arrow")),
@@ -972,7 +980,19 @@ server <- function(input, output, session) {
     }
   })
 
+  observeEvent(input$main_tabs, {
+    if (input$main_tabs != "user_details" && !isTRUE(input$accept_terms)) {
+      showNotification(tr("M_01", "Please accept the terms and conditions first."), type = "error")
+      updateTabsetPanel(session, "main_tabs", selected = "user_details")
+      active_tab("user_details")
+    }
+  }, ignoreInit = TRUE)
+
   observeEvent(input$welcome_next, {
+    if (!isTRUE(input$accept_terms)) {
+      showNotification(tr("M_01", "Please accept the terms and conditions first."), type = "error")
+      return()
+    }
     updateTabsetPanel(session, "main_tabs", selected = "get_id")
     active_tab("get_id")
   })
@@ -1091,11 +1111,11 @@ server <- function(input, output, session) {
     loc <- current_location()
     new_record <- tibble(
       timestamp             = Sys.time(),
-      observer_name         = NA_character_,
-      include_name          = NA_character_,
+      observer_name         = input$observer_name %||% NA_character_,
+      include_name          = input$include_name %||% NA_character_,
       observer_email        = input$observer_email %||% NA_character_,
       site_name             = input$site_name,
-      grid_cell             = NA_character_,
+      grid_cell             = input$grid_cell %||% NA_character_,
       latitude              = if (!is.null(loc)) as.numeric(loc$lat) else NA_real_,
       longitude             = if (!is.null(loc)) as.numeric(loc$lon) else NA_real_,
       species_name          = input$species_name,
@@ -1137,6 +1157,7 @@ server <- function(input, output, session) {
       shinyjs::reset("survey1_inputs")
       shinyjs::reset("survey2_inputs")
       updateTextInput(session, "site_name", value = "")
+      updateTextInput(session, "grid_cell", value = "")
       updateTextInput(session, "species_name", value = "")
       updateTextAreaInput(session, "notes", value = "")
 
@@ -1172,6 +1193,7 @@ server <- function(input, output, session) {
     req(nrow(df) > 0)
     display_df <- data.frame(
       Date    = as.character(as.Date(df$timestamp)),
+      User    = as.character(df$observer_name),
       Site    = as.character(df$site_name),
       Species = as.character(df$species_name),
       stringsAsFactors = FALSE
