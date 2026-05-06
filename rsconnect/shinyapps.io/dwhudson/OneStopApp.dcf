@@ -5,7 +5,7 @@ account: dwhudson
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 17139848
-bundleId: 11933254
+bundleId: 11956803
 url: https://dwhudson.shinyapps.io/OneStopApp/
 version: 1
 asMultiple: FALSE
