@@ -1,3 +1,4 @@
+
 # ==================================================================
 #   Sentinel Garden Survey + iNaturalist integration + translations
 #   PostgreSQL version
@@ -87,16 +88,10 @@ ensure_db <- function(pool) {
       outcompeted STRING,
       coverage_dafor STRING,
       notes STRING,
-      inat_id STRING,
-      inat_upload_mode STRING
+      inat_id STRING
     );
     "
   )
-  
-  existing_cols <- DBI::dbGetQuery(pool, "SHOW COLUMNS FROM observations;")
-  if (!"inat_upload_mode" %in% existing_cols$column_name) {
-    DBI::dbExecute(pool, "ALTER TABLE observations ADD COLUMN inat_upload_mode STRING;")
-  }
 }
 
 load_data <- function(pool) {
@@ -196,19 +191,19 @@ plantnet_parse <- function(payload, top_n = 5) {
   res <- payload$results
   if (is.null(res) || nrow(res) == 0) return(tibble())
   res <- head(res, top_n)
-  
+
   common_names <- vapply(
     res$species$commonNames,
     function(x) if (is.null(x) || length(x) == 0) "-" else paste(x, collapse = ", "),
     FUN.VALUE = character(1)
   )
-  
+
   family_names <- if (!is.null(res$species$family$scientificNameWithoutAuthor)) {
     res$species$family$scientificNameWithoutAuthor
   } else {
     rep("", nrow(res))
   }
-  
+
   image_urls <- vapply(
     seq_len(nrow(res)),
     function(i) {
@@ -223,7 +218,7 @@ plantnet_parse <- function(payload, top_n = 5) {
     },
     FUN.VALUE = character(1)
   )
-  
+
   tibble(
     Score           = round(res$score, 3),
     Scientific.Name = res$species$scientificNameWithoutAuthor,
@@ -242,9 +237,6 @@ INAT_OBS_URL       <- "https://www.inaturalist.org/observations.json"
 INAT_OBS_PHOTO_URL <- "https://www.inaturalist.org/observation_photos.json"
 INAT_ADMIN_CODE    <- Sys.getenv("INAT_ADMIN_CODE")
 INAT_PROJECT_ID    <- Sys.getenv("INAT_PROJECT_ID")
-
-INAT_FALLBACK_ACCESS_TOKEN <- Sys.getenv("INAT_FALLBACK_ACCESS_TOKEN")
-INAT_FALLBACK_LABEL        <- Sys.getenv("INAT_FALLBACK_LABEL", unset = "project iNaturalist account")
 
 get_inaturalist_project <- function(project_id) {
   if (is.null(project_id) || !nzchar(project_id)) {
@@ -320,41 +312,6 @@ get_inaturalist_jwt <- function(token) {
   jwt <- NULL
   if (!inherits(parsed, "try-error") && !is.null(parsed)) jwt <- parsed$api_token %||% parsed$token %||% NULL
   list(ok = !is.null(jwt) && nzchar(jwt), status = status, body = body_txt, jwt = jwt)
-}
-
-get_fallback_inat_auth <- function() {
-  if (!nzchar(INAT_FALLBACK_ACCESS_TOKEN)) {
-    return(list(token = NULL, jwt = NULL, mode = "none"))
-  }
-  
-  fallback_token <- list(access_token = INAT_FALLBACK_ACCESS_TOKEN)
-  jwt_res <- get_inaturalist_jwt(fallback_token)
-  
-  if (!isTRUE(jwt_res$ok)) {
-    warning(sprintf(
-      "Fallback iNaturalist JWT request failed (HTTP %s): %s",
-      jwt_res$status %||% "unknown",
-      substr(jwt_res$body %||% "", 1, 200)
-    ))
-    return(list(token = fallback_token, jwt = NULL, mode = "fallback"))
-  }
-  
-  list(
-    token = fallback_token,
-    jwt   = jwt_res$jwt,
-    mode  = "fallback"
-  )
-}
-
-get_effective_inat_auth <- function(user_token, user_jwt) {
-  if (!is.null(user_token)) {
-    return(list(
-      token = user_token,
-      jwt   = user_jwt,
-      mode  = "user"
-    ))
-  }
-  get_fallback_inat_auth()
 }
 
 check_inaturalist_project_membership <- function(jwt, project_id) {
@@ -450,32 +407,6 @@ check_observation_project_link <- function(obs_id, project_id) {
   as.integer(project_id) %in% c(project_ids, non_trad_ids)
 }
 
-inat_get_taxon_name <- function(obs_id) {
-  if (is.na(obs_id) || !nzchar(obs_id)) return(NA_character_)
-  
-  url <- paste0("https://api.inaturalist.org/v1/observations/", obs_id)
-  
-  res <- try(
-    httr::GET(url, query = list(locale = "en"), httr::timeout(20)),
-    silent = TRUE
-  )
-  if (inherits(res, "try-error")) return(NA_character_)
-  if (httr::status_code(res) >= 300L) return(NA_character_)
-  
-  j <- try(httr::content(res, as = "parsed", type = "application/json"), silent = TRUE)
-  if (inherits(j, "try-error") || is.null(j$results) || length(j$results) == 0) {
-    return(NA_character_)
-  }
-  
-  o <- j$results[[1]]
-  
-  if (!is.null(o$community_taxon) && !is.null(o$community_taxon$name)) return(o$community_taxon$name)
-  if (!is.null(o$taxon) && !is.null(o$taxon$name)) return(o$taxon$name)
-  if (!is.null(o$species_guess)) return(o$species_guess)
-  
-  NA_character_
-}
-
 push_to_inaturalist <- function(token, jwt = NULL, project_id = NULL, species_name, loc = NULL, notes = NULL, photo = NULL) {
   if (is.null(token)) {
     warning("No iNaturalist token (NULL), skipping upload")
@@ -490,7 +421,7 @@ push_to_inaturalist <- function(token, jwt = NULL, project_id = NULL, species_na
     warning("No iNaturalist access_token, skipping upload")
     return(NA_character_)
   }
-  
+
   body <- list(
     "observation[species_guess]"      = species_name,
     "observation[observed_on_string]" = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
@@ -501,7 +432,7 @@ push_to_inaturalist <- function(token, jwt = NULL, project_id = NULL, species_na
     body[["observation[latitude]"]]  <- loc$lat
     body[["observation[longitude]"]] <- loc$lon
   }
-  
+
   res <- try(
     httr::POST(
       url    = INAT_OBS_URL,
@@ -516,14 +447,14 @@ push_to_inaturalist <- function(token, jwt = NULL, project_id = NULL, species_na
     warning("iNaturalist /observations POST failed (network / httr error)")
     return(NA_character_)
   }
-  
+
   status      <- httr::status_code(res)
   content_txt <- httr::content(res, "text", encoding = "UTF-8")
   if (status >= 300L) {
     warning(sprintf("iNaturalist /observations POST failed (%s): %s", status, substr(content_txt, 1, 200)))
     return(NA_character_)
   }
-  
+
   obs_id <- NA_character_
   obs_json <- if (nzchar(content_txt)) try(jsonlite::fromJSON(content_txt), silent = TRUE) else NULL
   if (!inherits(obs_json, "try-error") && !is.null(obs_json)) {
@@ -533,9 +464,9 @@ push_to_inaturalist <- function(token, jwt = NULL, project_id = NULL, species_na
       obs_id <- as.character(obs_json[[1]]$id)
     }
   }
-  
+
   if (!nzchar(obs_id)) return(NA_character_)
-  
+
   if (!is.null(photo) && !is.null(photo$datapath) && nzchar(photo$datapath) && file.exists(photo$datapath)) {
     photo_body <- list(
       "observation_photo[observation_id]" = obs_id,
@@ -559,7 +490,7 @@ push_to_inaturalist <- function(token, jwt = NULL, project_id = NULL, species_na
       }
     }
   }
-  
+
   project_added <- FALSE
   if (!is.null(jwt) && nzchar(jwt) && !is.null(project_id) && nzchar(project_id)) {
     add_res <- add_observation_to_inat_project(jwt, project_id, obs_id)
@@ -587,12 +518,6 @@ ui <- fluidPage(
       Shiny.addCustomMessageHandler('inat_redirect', function(url) {
         window.location = url;
       });
-      Shiny.addCustomMessageHandler('clear_query_string', function(message) {
-        if (window.history && window.history.replaceState) {
-          const cleanUrl = window.location.protocol + '//' + window.location.host + window.location.pathname;
-          window.history.replaceState({}, document.title, cleanUrl);
-        }
-      });
       document.addEventListener('DOMContentLoaded', function() {
         Shiny.setInputValue(
           'browser_language',
@@ -609,70 +534,33 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
   ensure_db(db_pool)
-  
+
   inat_token <- reactiveVal(NULL)
   inat_jwt <- reactiveVal(NULL)
   inat_project_member <- reactiveVal(FALSE)
   project_info <- reactiveVal(NULL)
-  
+
   id_results       <- reactiveVal(NULL)
   records_data     <- reactiveVal(load_data(db_pool))
   current_location <- reactiveVal(NULL)
   active_photo     <- reactiveVal(NULL)
-  
+
   selected_language <- reactiveVal("en")
   active_tab <- reactiveVal("user_details")
-  
-  shinyjs::runjs("
-  $(document).on('click', '#get_location_btn', function() {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        function(position) {
-          Shiny.setInputValue('geolocation', {
-            lat: position.coords.latitude,
-            lon: position.coords.longitude
-          }, { priority: 'event' });
-        },
-        function(error) {
-          let msg = 'Unable to retrieve location.';
-          if (error && error.message) {
-            msg = error.message;
-          }
-          Shiny.setInputValue('geolocation_error', msg, { priority: 'event' });
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 15000,
-          maximumAge: 0
-        }
-      );
-    } else {
-      Shiny.setInputValue(
-        'geolocation_error',
-        'Geolocation is not supported by this browser.',
-        { priority: 'event' }
-      );
-    }
-  });
 
-  $(document).on('click', '#show_location_map', function() {
-    Shiny.setInputValue('open_location_map', Date.now(), { priority: 'event' });
-  });
-")
-  
   observeEvent(input$browser_language, {
     selected_language(normalize_language(input$browser_language))
   }, once = TRUE)
-  
+
   observeEvent(input$language_choice, {
     req(input$language_choice)
     selected_language(input$language_choice)
   }, ignoreInit = TRUE)
-  
+
   observeEvent(input$main_tabs, {
     if (!is.null(input$main_tabs)) active_tab(input$main_tabs)
   }, ignoreInit = TRUE)
-  
+
   observe({
     if (!nzchar(INAT_PROJECT_ID)) {
       project_info(NULL)
@@ -681,13 +569,13 @@ server <- function(input, output, session) {
     pr <- get_inaturalist_project(INAT_PROJECT_ID)
     if (isTRUE(pr$ok)) project_info(pr$project) else project_info(NULL)
   })
-  
+
   tr <- function(id, default = NULL) tr_text(id, selected_language(), default)
-  
+
   next_label <- function() tagList(tr("UX_NEXT", "Next"), " ", icon("play"))
   back_label <- function() tagList(icon("arrow-left"), " ", tr("UX_BACK", "Back"))
   restart_label <- function() tagList(icon("arrow-left"), " ", tr("R_03", "Start new record"))
-  
+
   observe({
     if (is.null(inat_token())) {
       inat_project_member(FALSE)
@@ -697,7 +585,7 @@ server <- function(input, output, session) {
       shinyjs::hide("inat_login_btn")
     }
   })
-  
+
   output$header_ui <- renderUI({
     fluidRow(
       column(
@@ -716,7 +604,7 @@ server <- function(input, output, session) {
       )
     )
   })
-  
+
   output$footer_ui <- renderUI({
     fluidRow(
       column(
@@ -754,38 +642,34 @@ server <- function(input, output, session) {
       )
     )
   })
-  
+
   output$inat_status_ui <- renderUI({
     tok <- inat_token()
     pr  <- project_info()
     project_name <- get_project_name(pr, paste("project", INAT_PROJECT_ID))
     if (is.null(tok)) {
-      return(tags$div(
-        class = "inat-status inat-status-disconnected",
-        icon("circle-xmark"),
-        paste0(" ", tr("UX_INAT_NOT_CONNECTED", "Not connected to iNaturalist."))
-      ))
+      return(tags$div(class = "inat-status inat-status-disconnected", icon("circle-xmark"), paste0(" ", tr("UX_INAT_NOT_CONNECTED", "Not connected to iNaturalist."))))
     }
     if (isTRUE(inat_project_member())) {
       return(tags$div(
         class = "inat-status inat-status-connected",
         icon("circle-check"),
-        paste0(" ", sprintf(tr("UX_INAT_ALREADY_MEMBER_STATUS", "Connected to iNaturalist. You are already a member of %s."), project_name))
+        paste0(" ", sprintf(tr("UX_INAT_ALREADY_MEMBER_STATUS", "Connected to iNaturalist. Already a member of %s. Observations will be added to this project."), project_name))
       ))
     }
     tags$div(
       class = "inat-status inat-status-connected",
       icon("circle-check"),
-      paste0(" ", sprintf(tr("UX_INAT_NOT_MEMBER_STATUS", "Connected to iNaturalist. You are not currently a member of %s."), project_name))
+      paste0(" ", sprintf(tr("UX_INAT_NOT_MEMBER_STATUS", "Connected to iNaturalist. Not yet a member of %s."), project_name))
     )
   })
-  
+
   output$inat_project_ui <- renderUI({
     tok <- inat_token()
     pr  <- project_info()
     if (is.null(tok)) return(NULL)
     if (!nzchar(INAT_PROJECT_ID)) {
-      return(tags$div(class = "text-muted", tr("UX_PROJECT_JOIN_NOT_CONFIGURED", "Project membership is not configured on the server.")))
+      return(tags$div(class = "text-muted", tr("UX_PROJECT_JOIN_NOT_CONFIGURED", "Project join is not configured on the server.")))
     }
     project_name <- get_project_name(pr, paste("project", INAT_PROJECT_ID))
     if (isTRUE(inat_project_member())) {
@@ -796,7 +680,7 @@ server <- function(input, output, session) {
       ))
     }
     tagList(
-      p(class = "text-muted", sprintf(tr("UX_PROJECT_JOIN_PROMPT", "You can optionally join %s on iNaturalist if you would like your account to appear as a project participant."), project_name)),
+      p(class = "text-muted", sprintf(tr("UX_PROJECT_JOIN_PROMPT", "Join %s so your account is linked as a participant and your observations can be added to the project."), project_name)),
       actionButton(
         "join_project_btn",
         sprintf(tr("UX_PROJECT_JOIN_BUTTON", "Join %s"), project_name),
@@ -805,7 +689,7 @@ server <- function(input, output, session) {
       )
     )
   })
-  
+
   output$main_tabs_ui <- renderUI({
     tabsetPanel(
       id = "main_tabs",
@@ -819,7 +703,7 @@ server <- function(input, output, session) {
             wellPanel(
               selectInput("language_choice", tr("UX_LANGUAGE", "Language"), choices = supported_languages, selected = isolate(input$language_choice %||% selected_language())),
               h4(tr("U_01", "Step 1 – Connect with iNaturalist")),
-              p(tr("U_02", "If you connect your iNaturalist account, observations you submit here will be uploaded to your own iNaturalist account and added to the project on iNaturalist. If you do not connect an account, observations can still be uploaded via the project’s iNaturalist account and added to the project.")),
+              p(tr("U_02", "If you connect your iNaturalist account, each record you submit here will also be uploaded as an observation to your own iNaturalist account.")),
               div(
                 class = "inat-connect-block",
                 actionButton("inat_login_btn", tr("U_03", "Connect to iNaturalist"), icon = icon("leaf"), class = "btn-success btn-full-width"),
@@ -830,11 +714,11 @@ server <- function(input, output, session) {
               ),
               br(),
               p(tr("U_24", "Don’t have an iNaturalist account yet?"), " ", tags$a(tr("U_25", "Create one here"), href = "https://www.inaturalist.org/signup", target = "_blank")),
-              p(class = "text-muted", tr("U_26", "You can also continue without connecting. If you do, observations will be uploaded via the project’s iNaturalist account and added to the project.")),
+              p(class = "text-muted", tr("U_26", "You can also continue without connecting – your records will be stored in this project only and not uploaded to iNaturalist.")),
               hr(),
               p(tr("U_27", "Your data will help us understand the spread of potentially invasive alien species and inform policy in that regard. If you want to get more information on invasive alien species or about the project, please visit"), " ", tags$a("https://onestop-project.eu/", href = "https://onestop-project.eu/", target = "_blank"), "."),
               br(),
-              p(tags$strong(tr("U_28", "Data policy:")), " ", tr("U_29", "The collected survey data will only be used for research purposes and made available in an open access format. Your survey responses will remain anonymous. If you connect your own iNaturalist account, your species records will be associated with that account and covered by iNaturalist’s terms and conditions. If you do not connect an account, records will instead be uploaded using the project’s iNaturalist account. In both cases, observations submitted through this app will be added to the project on iNaturalist.")),
+              p(tags$strong(tr("U_28", "Data policy:")), " ", tr("U_29", "The collected survey data will only be used for research purposes and made available in an open access format. Your survey responses will remain anonymous, but your species records will be associated with your iNaturalist account and will be covered by their terms and conditions.")),
               br(),
               p(tr("U_30", "If you want to receive updates about the results, please provide your email address below. This will be stored securely in line with GDPR policies and separate from your survey answers.")),
               textInput("observer_email", tr("U_31", "Your email address (optional, for project updates)"), value = isolate(input$observer_email %||% "")),
@@ -870,7 +754,7 @@ server <- function(input, output, session) {
                 hr(),
                 h4(tr("ID_08", "Location & plant name")),
                 textInput("site_name", tr("ID_09", "Where did you survey? (town/village and site name)"), value = isolate(input$site_name %||% ""), placeholder = tr("ID_10", "e.g., North Meadow, Truro")),
-                textInput("species_name", tr("ID_13", "Plant name (edit if you disagree with the PlantNet ID)"), value = isolate(input$species_name %||% ""), placeholder = tr("ID_14", "Select from PlantNet results or enter manually")),
+                                textInput("species_name", tr("ID_13", "Plant name (edit if you disagree with the PlantNet ID)"), value = isolate(input$species_name %||% ""), placeholder = tr("ID_14", "Select from PlantNet results or enter manually")),
                 div(
                   class = "button-container-full-width",
                   actionButton("get_location_btn", tr("ID_15", "Use my GPS location"), class = "btn-outline-info btn-full-width", icon = icon("location-arrow")),
@@ -943,12 +827,6 @@ server <- function(input, output, session) {
                 h4(tr("S2_01", "Origin, impacts and comments")),
                 checkboxGroupInput("introduction_routes", tr("S2_02", "How do you think this plant came into your garden? (tick all that apply)"), choices = c(tr("S2_03", "It was already in the garden"), tr("S2_04", "I introduced it"), tr("S2_05", "It spread from the direct vicinity of my garden"), tr("UX_DONT_KNOW", "I don't know"), tr("S1_13", "other")), selected = isolate(input$introduction_routes %||% character(0))),
                 checkboxGroupInput("source_of_plant", tr("S2_06", "Where did you get it? (tick all that apply)"), choices = c(tr("S2_07", "Garden center"), tr("S2_08", "Plant fair"), tr("S2_09", "I got it through a friend or another gardener"), tr("S2_10", "I bought it online from a nursery"), tr("S2_11", "I bought it on an online e-trade platform (e.g. ebay, tweedehands, etsy, …)"), tr("S2_12", "I got it from a big retailer (e.g. supermarket, DIY store)"), tr("S2_14", "Other, please state.")), selected = isolate(input$source_of_plant %||% character(0))),
-                textInput(
-                  "source_of_plant_other",
-                  tr("S2_14b", "Additional details on where you got the plant (optional)"),
-                  value = isolate(input$source_of_plant_other %||% ""),
-                  placeholder = tr("S2_14c", "e.g. local market, neighbour, plant swap, roadside stall")
-                ),
                 radioButtons("outside_garden", tr("S2_15", "Is the plant growing locally outside your garden?"), choices = c(tr("UX_YES", "Yes"), tr("UX_NO", "No"), tr("UX_DONT_KNOW", "I don't know")), selected = isolate(input$outside_garden %||% character(0))),
                 radioButtons("warning_label", tr("S2_16", "In your opinion, should the plant be sold with a label warning buyers of potential control difficulties in their garden?"), choices = c(tr("UX_YES", "Yes"), tr("UX_NO", "No"), tr("UX_DONT_KNOW", "I don't know")), selected = isolate(input$warning_label %||% character(0))),
                 radioButtons("outcompeted", tr("S2_17", "Has this plant outcompeted other plants in your garden? For instance, have other plants been overgrown or disappeared?"), choices = c(tr("UX_YES", "Yes"), tr("UX_NO", "No"), tr("UX_DONT_KNOW", "I don't know")), selected = isolate(input$outcompeted %||% character(0))),
@@ -981,18 +859,18 @@ server <- function(input, output, session) {
       )
     )
   })
-  
+
   observe({
     query <- parseQueryString(isolate(session$clientData$url_search %||% ""))
     if (is.null(query$code)) return()
-    
+    isolate({ if (!is.null(inat_token())) return() })
+
     code <- query$code
-    
     if (INAT_CLIENT_ID == "" || INAT_CLIENT_SECRET == "" || INAT_REDIRECT_URI == "") {
       showNotification(tr("UX_CREDENTIALS_MISSING", "iNaturalist credentials not configured on server."), type = "error")
       return()
     }
-    
+
     res <- try(
       httr::POST(
         INAT_TOKEN_URL,
@@ -1007,24 +885,22 @@ server <- function(input, output, session) {
       ),
       silent = TRUE
     )
-    
     if (inherits(res, "try-error") || httr::status_code(res) >= 400) {
       showNotification(tr("UX_LOGIN_FAILED", "iNaturalist login failed."), type = "error")
       return()
     }
-    
+
     tok <- httr::content(res, as = "parsed", type = "application/json")
     if (is.null(tok$access_token)) {
       showNotification(tr("UX_NO_ACCESS_TOKEN", "iNaturalist login failed: no access token returned."), type = "error")
       return()
     }
-    
+
     inat_token(tok)
-    
+
     jwt_res <- get_inaturalist_jwt(tok)
     if (!isTRUE(jwt_res$ok)) {
       inat_jwt(NULL)
-      inat_project_member(FALSE)
       showNotification(
         paste0(tr("UX_JWT_FAILED", "Connected to iNaturalist, but failed to obtain API JWT. HTTP "), jwt_res$status %||% "unknown"),
         type = "error",
@@ -1032,45 +908,32 @@ server <- function(input, output, session) {
       )
       return()
     }
-    
+
     inat_jwt(jwt_res$jwt)
-    
+
     is_member <- FALSE
     if (nzchar(INAT_PROJECT_ID)) {
-      membership_res <- check_inaturalist_project_membership(jwt_res$jwt, INAT_PROJECT_ID)
-      is_member <- isTRUE(membership_res$ok)
+      membership_res <- check_inaturalist_project_membership(inat_jwt(), INAT_PROJECT_ID)
+      if (isTRUE(membership_res$ok)) is_member <- TRUE
     }
-    
+
     inat_project_member(is_member)
-    
     pr <- project_info()
     project_name <- get_project_name(pr, "the configured iNaturalist project")
-    
+
     if (isTRUE(is_member)) {
-      showNotification(
-        sprintf(tr("UX_CONNECTED_ALREADY_MEMBER", "Connected to iNaturalist. You are already a member of %s."), project_name),
-        type = "message"
-      )
+      showNotification(sprintf(tr("UX_CONNECTED_ALREADY_MEMBER", "Connected to iNaturalist. Already a member of %s."), project_name), type = "message")
     } else {
-      showNotification(
-        sprintf(tr("UX_INAT_NOT_MEMBER_STATUS", "Connected to iNaturalist. You are not currently a member of %s."), project_name),
-        type = "message"
-      )
+      showNotification(sprintf(tr("UX_INAT_NOT_MEMBER_STATUS", "Connected to iNaturalist. Not yet a member of %s."), project_name), type = "message")
     }
-    
-    session$sendCustomMessage("clear_query_string", list())
   })
-  
+
   observeEvent(input$inat_login_btn, {
-    inat_token(NULL)
-    inat_jwt(NULL)
-    inat_project_member(FALSE)
-    
     if (INAT_CLIENT_ID == "" || INAT_CLIENT_SECRET == "" || INAT_REDIRECT_URI == "") {
       showNotification(tr("UX_CLIENT_SECRET_REDIRECT_MISSING", "iNaturalist client ID, client secret, or redirect URI not configured."), type = "error")
       return()
     }
-    
+
     state <- paste(sample(c(letters, LETTERS, 0:9), 32, replace = TRUE), collapse = "")
     auth_url <- paste0(
       INAT_AUTHORIZE_URL, "?",
@@ -1082,7 +945,7 @@ server <- function(input, output, session) {
     )
     session$sendCustomMessage("inat_redirect", auth_url)
   })
-  
+
   observeEvent(input$join_project_btn, {
     jwt <- inat_jwt()
     req(jwt)
@@ -1092,85 +955,74 @@ server <- function(input, output, session) {
     }
     pr <- project_info()
     project_name <- get_project_name(pr, paste("project", INAT_PROJECT_ID))
-    
     membership_res <- check_inaturalist_project_membership(jwt, INAT_PROJECT_ID)
+
     if (isTRUE(membership_res$ok)) {
       inat_project_member(TRUE)
       showNotification(sprintf(tr("UX_PROJECT_ALREADY_MEMBER", "You are already a member of %s."), project_name), type = "message")
       return()
     }
-    
+
     join_res <- join_inaturalist_project(jwt, INAT_PROJECT_ID)
     if (isTRUE(join_res$ok)) {
       inat_project_member(TRUE)
       showNotification(sprintf(tr("UX_JOIN_SUCCESS", "You have joined %s."), project_name), type = "message")
     } else {
-      inat_project_member(FALSE)
       showNotification(sprintf(tr("UX_JOIN_FAIL_HTTP", "Could not join %s. HTTP %s"), project_name, join_res$status %||% "unknown"), type = "error", duration = 10)
     }
   })
-  
+
   observeEvent(input$welcome_next, {
     updateTabsetPanel(session, "main_tabs", selected = "get_id")
     active_tab("get_id")
   })
-  
+
   observeEvent(input$back_get_id,  { updateTabsetPanel(session, "main_tabs", selected = "user_details"); active_tab("user_details") })
   observeEvent(input$next_get_id,  { updateTabsetPanel(session, "main_tabs", selected = "survey1");      active_tab("survey1") })
   observeEvent(input$back_survey1, { updateTabsetPanel(session, "main_tabs", selected = "get_id");       active_tab("get_id") })
   observeEvent(input$next_survey1, { updateTabsetPanel(session, "main_tabs", selected = "survey2");      active_tab("survey2") })
   observeEvent(input$back_survey2, { updateTabsetPanel(session, "main_tabs", selected = "survey1");      active_tab("survey1") })
   observeEvent(input$back_results, { updateTabsetPanel(session, "main_tabs", selected = "get_id");       active_tab("get_id") })
-  
+
   observeEvent(input$photo_capture, { req(input$photo_capture); active_photo(input$photo_capture) })
   observeEvent(input$photo_upload,  { req(input$photo_upload);  active_photo(input$photo_upload) })
-  
+
   output$photo_preview <- renderImage({
     req(active_photo())
     list(src = active_photo()$datapath, contentType = active_photo()$type, width = "100%")
   }, deleteFile = FALSE)
-  
+
   observeEvent(input$geolocation, {
     loc <- input$geolocation
     if (is.null(loc)) return()
     current_location(loc)
     leafletProxy("location_map") %>% clearMarkers() %>% addMarkers(lng = loc$lon, lat = loc$lat) %>% setView(lng = loc$lon, lat = loc$lat, zoom = 14)
   })
-  
-  observeEvent(input$geolocation_error, {
-    showNotification(
-      paste(tr("UX_GEOLOCATION_FAILED", "Location error:"), input$geolocation_error),
-      type = "error",
-      duration = 8
-    )
-  })
-  
+
   output$location_status <- renderText({
     loc <- current_location()
     if (is.null(loc)) tr("ID_17", "Location not set.") else paste0("Lat: ", round(loc$lat, 5), ", Lon: ", round(loc$lon, 5))
   })
-  
-  observeEvent(input$open_location_map, {shinyjs::show("location_map_panel")})
-  
+
+  observeEvent(input$show_location_map, { shinyjs::show("location_map_panel") })
+
   output$location_map <- renderLeaflet({
     loc <- current_location()
     if (!is.null(loc)) {
-      lat <- loc$lat
-      lon <- loc$lon
+      lat <- loc$lat; lon <- loc$lon
     } else {
-      lat <- 51.5
-      lon <- -0.1
+      lat <- 51.5; lon <- -0.1
     }
     leaflet() %>% addTiles() %>% setView(lng = lon, lat = lat, zoom = 12)
   })
-  
+
   observeEvent(input$location_map_click, {
     click <- input$location_map_click
     if (is.null(click)) return()
     current_location(list(lat = click$lat, lon = click$lng))
     leafletProxy("location_map") %>% clearMarkers() %>% addMarkers(lng = click$lng, lat = click$lat)
   })
-  
+
   observeEvent(input$id_btn, {
     if (!nzchar(PLANTNET_KEY)) {
       showNotification(tr("M_03", "PlantNet API key is not configured on the server."), type = "error")
@@ -1197,7 +1049,7 @@ server <- function(input, output, session) {
       showNotification(paste(tr("UX_PLANTNET_FAILED", "PlantNet request failed:"), conditionMessage(e)), type = "error")
     })
   })
-  
+
   output$id_results_ui <- renderUI({
     df <- id_results()
     if (is.null(df) || nrow(df) == 0) return(helpText(tr("ID_06", "Results will appear here after you run PlantNet.")))
@@ -1215,7 +1067,7 @@ server <- function(input, output, session) {
     })
     tagList(rows)
   })
-  
+
   observe({
     df <- id_results()
     req(df)
@@ -1225,7 +1077,7 @@ server <- function(input, output, session) {
       })
     })
   })
-  
+
   observeEvent(input$save_btn, {
     if (!nzchar(input$species_name %||% "")) {
       showNotification(tr("M_07", "Please enter a plant name before saving."), type = "error")
@@ -1235,16 +1087,8 @@ server <- function(input, output, session) {
       showNotification(tr("M_08", "Please enter a site name before saving."), type = "error")
       return()
     }
-    
+
     loc <- current_location()
-    
-    source_vals <- input$source_of_plant %||% character(0)
-    source_other <- trimws(input$source_of_plant_other %||% "")
-    source_combined <- source_vals
-    if (nzchar(source_other)) {
-      source_combined <- c(source_combined, paste0("Additional detail: ", source_other))
-    }
-    
     new_record <- tibble(
       timestamp             = Sys.time(),
       observer_name         = NA_character_,
@@ -1261,29 +1105,23 @@ server <- function(input, output, session) {
       control_methods       = if (length(input$control_methods)) paste(input$control_methods, collapse = "; ") else "",
       disposal_methods      = if (length(input$disposal_methods)) paste(input$disposal_methods, collapse = "; ") else "",
       introduction_routes   = if (length(input$introduction_routes)) paste(input$introduction_routes, collapse = "; ") else "",
-      source_of_plant       = if (length(source_combined)) paste(source_combined, collapse = "; ") else "",
+      source_of_plant       = if (length(input$source_of_plant)) paste(input$source_of_plant, collapse = "; ") else "",
       outside_garden        = input$outside_garden %||% NA_character_,
       warning_label         = input$warning_label %||% NA_character_,
       outcompeted           = input$outcompeted %||% NA_character_,
       coverage_dafor        = input$coverage_dafor %||% NA_character_,
       notes                 = input$notes %||% "",
-      inat_id               = NA_character_,
-      inat_upload_mode      = "none"
+      inat_id               = NA_character_
     )
     new_record_df <- as.data.frame(new_record, stringsAsFactors = FALSE)
-    
+
     tryCatch({
-      auth <- get_effective_inat_auth(
-        user_token = inat_token(),
-        user_jwt   = inat_jwt()
-      )
-      
+      tok <- inat_token()
       project_added <- FALSE
-      
-      if (!is.null(auth$token)) {
+      if (!is.null(tok)) {
         obs_id <- push_to_inaturalist(
-          token        = auth$token,
-          jwt          = auth$jwt,
+          token        = tok,
+          jwt          = inat_jwt(),
           project_id   = INAT_PROJECT_ID,
           species_name = input$species_name,
           loc          = loc,
@@ -1291,102 +1129,44 @@ server <- function(input, output, session) {
           photo        = active_photo()
         )
         new_record_df$inat_id[1] <- obs_id
-        new_record_df$inat_upload_mode[1] <- auth$mode
         project_added <- isTRUE(attr(obs_id, "project_added"))
       }
-      
+
       DBI::dbAppendTable(conn = db_pool, name = "observations", value = new_record_df)
-      
+
       shinyjs::reset("survey1_inputs")
       shinyjs::reset("survey2_inputs")
       updateTextInput(session, "site_name", value = "")
       updateTextInput(session, "species_name", value = "")
-      updateTextInput(session, "source_of_plant_other", value = "")
       updateTextAreaInput(session, "notes", value = "")
-      
+
       active_photo(NULL)
       shinyjs::reset("photo_capture")
       shinyjs::reset("photo_upload")
       current_location(NULL)
       id_results(NULL)
-      
+
       records_data(load_data(db_pool))
-      
+
       if (!is.na(new_record_df$inat_id[1]) && nzchar(new_record_df$inat_id[1])) {
         pr <- project_info()
         project_name <- get_project_name(pr, "the configured iNaturalist project")
-        
-        if (auth$mode == "user") {
-          if (isTRUE(project_added)) {
-            showNotification(
-              paste0(
-                "Record saved, uploaded to your iNaturalist account, and added to ",
-                project_name,
-                " (ID ",
-                new_record_df$inat_id[1],
-                ")."
-              ),
-              type = "message"
-            )
-          } else {
-            showNotification(
-              paste0(
-                "Record saved and uploaded to your iNaturalist account (ID ",
-                new_record_df$inat_id[1],
-                "), but it was not confirmed as added to ",
-                project_name,
-                "."
-              ),
-              type = "warning",
-              duration = 8
-            )
-          }
-        } else if (auth$mode == "fallback") {
-          if (isTRUE(project_added)) {
-            showNotification(
-              paste0(
-                "Record saved and uploaded via the ",
-                INAT_FALLBACK_LABEL,
-                ", and added to ",
-                project_name,
-                " (ID ",
-                new_record_df$inat_id[1],
-                ")."
-              ),
-              type = "message",
-              duration = 8
-            )
-          } else {
-            showNotification(
-              paste0(
-                "Record saved and uploaded via the ",
-                INAT_FALLBACK_LABEL,
-                " (ID ",
-                new_record_df$inat_id[1],
-                "), but it was not confirmed as added to ",
-                project_name,
-                "."
-              ),
-              type = "warning",
-              duration = 8
-            )
-          }
+        if (isTRUE(project_added)) {
+          showNotification(sprintf(tr("UX_SAVE_UPLOADED_AND_ADDED", "Record saved, uploaded to iNaturalist, and added to %s (ID %s)."), project_name, new_record_df$inat_id[1]), type = "message")
+        } else {
+          showNotification(sprintf(tr("UX_SAVE_UPLOADED_NOT_CONFIRMED", "Record saved and uploaded to iNaturalist (ID %s), but it was not confirmed as added to %s."), new_record_df$inat_id[1], project_name), type = "warning", duration = 8)
         }
       } else {
-        showNotification(
-          "Record saved to database, but no iNaturalist upload credentials were available.",
-          type = "warning",
-          duration = 8
-        )
+        showNotification(tr("M_09", "Record saved to database."), type = "message")
       }
-      
+
       updateTabsetPanel(session, "main_tabs", selected = "results")
       active_tab("results")
     }, error = function(e) {
       showNotification(paste(tr("UX_DB_ERROR", "Database Error:"), conditionMessage(e)), type = "error")
     })
   })
-  
+
   output$records_table <- renderDT({
     df <- records_data()
     req(nrow(df) > 0)
@@ -1398,7 +1178,7 @@ server <- function(input, output, session) {
     )
     datatable(display_df, options = list(dom = "tp", scrollX = TRUE), rownames = FALSE)
   })
-  
+
   output$obs_map <- renderLeaflet({
     df <- records_data()
     m <- leaflet() %>% addTiles()
@@ -1421,8 +1201,9 @@ server <- function(input, output, session) {
       return(m %>% setView(lng = -3, lat = 54, zoom = 5))
     }
     
-    grid_size  <- 0.01
-    lat_offset <- 0.0067
+    # Privacy settings
+    grid_size  <- 0.01     # coarser square
+    lat_offset <- 0.0067   # fixed offset
     lon_offset <- 0.0113
     
     df_clean$lat_bin <- floor((df_clean$latitude  + lat_offset) / grid_size) * grid_size - lat_offset
@@ -1485,7 +1266,7 @@ server <- function(input, output, session) {
         lat2 = max(cell_df$lat_max)
       )
   })
-  
+
   observeEvent(input$sync_inat_btn, {
     if (!nzchar(INAT_ADMIN_CODE)) {
       showNotification(tr("UX_ADMIN_NOT_CONFIGURED", "Admin sync code is not configured on the server."), type = "error")
@@ -1505,7 +1286,7 @@ server <- function(input, output, session) {
       showNotification(tr("UX_NO_INAT_IDS", "No records have iNaturalist IDs yet."), type = "warning")
       return()
     }
-    
+
     n_updated <- 0L
     for (i in idx) {
       obs_id   <- df$inat_id[i]

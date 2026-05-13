@@ -3,6 +3,8 @@ INAT_CLIENT_SECRET=MpNgSm5swG5UUKMK1nkc4kP3BdxjiDjf57wMZ6Ccb8I
 INAT_REDIRECT_URI=https://dwhudson.shinyapps.io/OneStopApp/
 INAT_ADMIN_CODE=Badger
 INAT_PROJECT_ID=254569
+INAT_FALLBACK_ACCESS_TOKEN=oo14HGIgS34re8taXR_XlIxL2GVAsEh99L-ltNV1IBo
+INAT_FALLBACK_LABEL=OneStop Plant Alert iNat account
 
 DB_HOST=quartz-roarer-10164.8nj.gcp-europe-west1.cockroachlabs.cloud
 DB_PORT=26257
