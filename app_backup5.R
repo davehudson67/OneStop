@@ -625,8 +625,6 @@ server <- function(input, output, session) {
   records_data     <- reactiveVal(load_data(db_pool))
   current_location <- reactiveVal(NULL)
   active_photo     <- reactiveVal(NULL)
-  admin_unlocked <- reactiveVal(FALSE)
-  pending_delete_id <- reactiveVal(NULL)
   
   selected_language <- reactiveVal("en")
   active_tab <- reactiveVal("user_details")
@@ -1000,9 +998,9 @@ server <- function(input, output, session) {
                 checkboxGroupInput("source_of_plant", tr("S2_06", "Where did you get it? (tick all that apply)"), choices = c(tr("S2_07", "Garden center"), tr("S2_08", "Plant fair"), tr("S2_09", "I got it through a friend or another gardener"), tr("S2_10", "I bought it online from a nursery"), tr("S2_11", "I bought it on an online e-trade platform (e.g. ebay, tweedehands, etsy, …)"), tr("S2_12", "I got it from a big retailer (e.g. supermarket, DIY store)"), tr("S2_14", "Other, please state.")), selected = isolate(input$source_of_plant %||% character(0))),
                 textInput(
                   "source_of_plant_other",
-                  tr("S2_14B", "Additional details on where you got the plant (optional)"),
+                  tr("S2_14b", "Additional details on where you got the plant (optional)"),
                   value = isolate(input$source_of_plant_other %||% ""),
-                  placeholder = tr("S2_14C", "e.g. local market, neighbour, plant swap, roadside stall")
+                  placeholder = tr("S2_14c", "e.g. local market, neighbour, plant swap, roadside stall")
                 ),
                 radioButtons("outside_garden", tr("S2_15", "Is the plant growing locally outside your garden?"), choices = c(tr("UX_YES", "Yes"), tr("UX_NO", "No"), tr("UX_DONT_KNOW", "I don't know")), selected = isolate(input$outside_garden %||% character(0))),
                 radioButtons("warning_label", tr("S2_16", "In your opinion, should the plant be sold with a label warning buyers of potential control difficulties in their garden?"), choices = c(tr("UX_YES", "Yes"), tr("UX_NO", "No"), tr("UX_DONT_KNOW", "I don't know")), selected = isolate(input$warning_label %||% character(0))),
@@ -1036,32 +1034,9 @@ server <- function(input, output, session) {
         p(class = "text-muted", tr("R_05", "If you are a project administrator, enter the admin code below and click \"Refresh IDs from iNaturalist\".")),
         div(
           class = "admin-tools-inline",
-          div(
-            class = "admin-code-wrapper",
-            passwordInput(
-              "admin_code",
-              tr("R_06", "Admin code"),
-              placeholder = tr("R_07", "Enter admin code")
-            )
-          ),
-          div(
-            class = "admin-sync-wrapper",
-            actionButton(
-              "unlock_admin_btn",
-              tr("UX_ADMIN_UNLOCK", "Unlock admin tools"),
-              class = "btn-outline-secondary btn-sm"
-            )
-          ),
-          div(
-            class = "admin-sync-wrapper",
-            actionButton(
-              "sync_inat_btn",
-              tr("R_08", "Refresh IDs from iNaturalist"),
-              class = "btn-outline-primary btn-sm"
-            )
-          )
+          div(class = "admin-code-wrapper", passwordInput("admin_code", tr("R_06", "Admin code"), placeholder = tr("R_07", "Enter admin code"))),
+          div(class = "admin-sync-wrapper", actionButton("sync_inat_btn", tr("R_08", "Refresh IDs from iNaturalist"), class = "btn-outline-primary btn-sm"))
         ),
-        uiOutput("admin_panel_ui"),
         hr()
       )
     )
@@ -1358,189 +1333,6 @@ server <- function(input, output, session) {
       observeEvent(input[[paste0("select_sp_", i)]], {
         updateTextInput(session, "species_name", value = df$Scientific.Name[i])
       })
-    })
-  })
-  
-  observeEvent(input$unlock_admin_btn, {
-    if (!nzchar(INAT_ADMIN_CODE)) {
-      showNotification(
-        tr("UX_ADMIN_NOT_CONFIGURED", "Admin sync code is not configured on the server."),
-        type = "error"
-      )
-      return()
-    }
-    
-    if (!identical(input$admin_code, INAT_ADMIN_CODE)) {
-      admin_unlocked(FALSE)
-      showNotification(
-        tr("UX_ADMIN_INCORRECT", "Incorrect admin code. Sync from iNaturalist is restricted."),
-        type = "error"
-      )
-      return()
-    }
-    
-    admin_unlocked(TRUE)
-    showNotification(
-      tr("UX_ADMIN_UNLOCKED", "Admin tools unlocked."),
-      type = "message"
-    )
-  })
-  
-  output$admin_panel_ui <- renderUI({
-    req(admin_unlocked())
-    
-    tagList(
-      hr(),
-      div(
-        class = "button-container-space-between",
-        h5(tr("UX_ADMIN_DB_TITLE", "Database records")),
-        actionButton(
-          "close_admin_btn",
-          tr("UX_ADMIN_CLOSE", "Close admin tools"),
-          class = "btn btn-outline-secondary btn-sm"
-        )
-      ),
-      p(
-        class = "text-muted",
-        tr("UX_ADMIN_DB_HELP", "Review saved records below and delete any test or unwanted entries.")
-      ),
-      div(
-        class = "button-container-left",
-        downloadButton(
-          "download_records_csv",
-          tr("UX_DOWNLOAD_BACKUP", "Download CSV backup"),
-          class = "btn btn-outline-secondary"
-        )
-      ),
-      br(),
-      DTOutput("admin_records_table")
-    )
-  })
-  
-  observeEvent(input$close_admin_btn, {
-    admin_unlocked(FALSE)
-    pending_delete_id(NULL)
-    showNotification(
-      tr("UX_ADMIN_CLOSED", "Admin tools closed."),
-      type = "message",
-      duration = 3
-    )
-  })
-  
-  output$download_records_csv <- downloadHandler(
-    filename = function() {
-      paste0(
-        "observations_backup_",
-        format(Sys.time(), "%Y-%m-%d_%H-%M-%S"),
-        ".csv"
-      )
-    },
-    content = function(file) {
-      req(admin_unlocked())
-      
-      df <- DBI::dbGetQuery(
-        db_pool,
-        "SELECT * FROM observations ORDER BY timestamp DESC;"
-      )
-      
-      write.csv(df, file, row.names = FALSE, na = "")
-    }
-  )
-  
-  output$admin_records_table <- renderDT({
-    req(admin_unlocked())
-    
-    df <- records_data()
-    req(nrow(df) > 0)
-    
-    admin_df <- data.frame(
-      Delete = sprintf(
-        '<button class=\"btn btn-danger btn-sm delete-record\" data-id=\"%s\">%s</button>',
-        df$id,
-        tr("UX_DELETE", "Delete")
-      ),
-      ID = df$id,
-      Date = as.character(as.Date(df$timestamp)),
-      Site = as.character(df$site_name),
-      Species = as.character(df$species_name),
-      Common.Name = as.character(df$common_name %||% ""),
-      Email = as.character(df$observer_email %||% ""),
-      Upload.Mode = as.character(df$inat_upload_mode %||% ""),
-      stringsAsFactors = FALSE
-    )
-    
-    datatable(
-      admin_df,
-      escape = FALSE,
-      rownames = FALSE,
-      selection = "none",
-      options = list(
-        scrollX = TRUE,
-        pageLength = 10
-      ),
-      callback = JS(
-        "table.on('click', '.delete-record', function() {",
-        "  var id = $(this).data('id');",
-        "  Shiny.setInputValue('delete_record_clicked', id, {priority: 'event'});",
-        "});"
-      )
-    )
-  })
-  
-  observeEvent(input$delete_record_clicked, {
-    req(admin_unlocked())
-    
-    pending_delete_id(input$delete_record_clicked)
-    
-    showModal(
-      modalDialog(
-        title = tr("UX_CONFIRM_DELETE_TITLE", "Confirm deletion"),
-        p(
-          sprintf(
-            tr("UX_CONFIRM_DELETE_TEXT", "Are you sure you want to delete record ID %s?"),
-            input$delete_record_clicked
-          )
-        ),
-        footer = tagList(
-          modalButton(tr("UX_CANCEL", "Cancel")),
-          actionButton(
-            "confirm_delete_record_btn",
-            tr("UX_DELETE", "Delete"),
-            class = "btn-danger"
-          )
-        ),
-        easyClose = TRUE
-      )
-    )
-  })
-  
-  observeEvent(input$confirm_delete_record_btn, {
-    req(admin_unlocked())
-    
-    delete_id <- pending_delete_id()
-    req(delete_id)
-    
-    tryCatch({
-      DBI::dbExecute(
-        db_pool,
-        "DELETE FROM observations WHERE id = $1;",
-        params = list(as.integer(delete_id))
-      )
-      
-      removeModal()
-      pending_delete_id(NULL)
-      records_data(load_data(db_pool))
-      
-      showNotification(
-        sprintf(tr("UX_DELETE_SUCCESS", "Record %s deleted."), delete_id),
-        type = "message"
-      )
-    }, error = function(e) {
-      removeModal()
-      showNotification(
-        paste(tr("UX_DELETE_FAILED", "Delete failed:"), conditionMessage(e)),
-        type = "error"
-      )
     })
   })
   
