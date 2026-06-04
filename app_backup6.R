@@ -477,106 +477,105 @@ inat_get_taxon_name <- function(obs_id) {
 }
 
 push_to_inaturalist <- function(token, jwt = NULL, project_id = NULL, species_name, loc = NULL, notes = NULL, photo = NULL) {
-  # --- Step 0: Validation ---
   if (is.null(token)) {
     warning("No iNaturalist token (NULL), skipping upload")
     return(NA_character_)
   }
-  access_token <- token$access_token %||% ""
+  access_token <- tryCatch({
+    at <- token$access_token
+    if (is.null(at) || length(at) == 0) return("")
+    as.character(at[1])
+  }, error = function(e) "")
   if (!nzchar(access_token)) {
     warning("No iNaturalist access_token, skipping upload")
     return(NA_character_)
   }
   
-  # --- Step 1: Create the Initial Observation ---
-  # This part is correct and remains unchanged.
   body <- list(
     "observation[species_guess]"      = species_name,
     "observation[observed_on_string]" = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
     "observation[time_zone]"          = "UTC",
     "observation[description]"        = notes %||% ""
   )
-  if (!is.null(loc)) { body[["observation[latitude]"]]  <- loc$lat; body[["observation[longitude]"]] <- loc$lon }
+  if (!is.null(loc) && !is.null(loc$lat) && !is.null(loc$lon)) {
+    body[["observation[latitude]"]]  <- loc$lat
+    body[["observation[longitude]"]] <- loc$lon
+  }
   
-  res <- try(httr::POST(url=INAT_OBS_URL, httr::add_headers(Authorization=paste("Bearer",access_token)), body=body, encode="form", httr::timeout(30)), silent=TRUE)
+  res <- try(
+    httr::POST(
+      url    = INAT_OBS_URL,
+      httr::add_headers(Authorization = paste("Bearer", access_token)),
+      body   = body,
+      encode = "form",
+      httr::timeout(30)
+    ),
+    silent = TRUE
+  )
+  if (inherits(res, "try-error")) {
+    warning("iNaturalist /observations POST failed (network / httr error)")
+    return(NA_character_)
+  }
   
-  if (inherits(res, "try-error") || httr::status_code(res) >= 300L) {
-    warning(sprintf("iNaturalist /observations POST failed (%s)", httr::status_code(res))); return(NA_character_)
+  status      <- httr::status_code(res)
+  content_txt <- httr::content(res, "text", encoding = "UTF-8")
+  if (status >= 300L) {
+    warning(sprintf("iNaturalist /observations POST failed (%s): %s", status, substr(content_txt, 1, 200)))
+    return(NA_character_)
   }
   
   obs_id <- NA_character_
-  obs_json <- try(jsonlite::fromJSON(httr::content(res, "text", encoding="UTF-8")), silent=TRUE)
-  if (!inherits(obs_json, "try-error") && !is.null(obs_json)) { obs_id <- (obs_json$id[1] %||% obs_json[[1]]$id) }
-  if (is.null(obs_id) || !nzchar(obs_id)) { warning("Failed to extract ID from observation response."); return(NA_character_) }
-  obs_id <- as.character(obs_id)
-  message(paste("Successfully created iNaturalist observation:", obs_id))
-  
-  # --- Step 2: Mark as Cultivated (WITH CORRECT API ENDPOINT) ---
-  if (!is.null(jwt) && nzchar(jwt)) {
-    
-    # *** THIS FIXES THE '404 NOT FOUND' ERROR ***
-    # The URL now correctly points to 'api.inaturalist.org' and the v1 endpoint.
-    metric_url <- paste0("https://api.inaturalist.org/v1/observations/", obs_id, "/quality/", "wild")
-    
-    metric_body <- list(agree = "false") 
-    
-    metric_res <- try(
-      httr::POST(
-        url = metric_url,
-        httr::add_headers(Authorization = paste("Bearer", jwt)),
-        body = metric_body,
-        encode = "json",
-        httr::timeout(20)
-      ),
-      silent = TRUE
-    )
-    
-    if (inherits(metric_res, "try-error") || httr::status_code(metric_res) >= 300L) {
-      warning(sprintf("Observation %s was created, but failed to mark as cultivated.", obs_id))
-    } else {
-      message(sprintf("Observation %s successfully marked as cultivated.", obs_id))
+  obs_json <- if (nzchar(content_txt)) try(jsonlite::fromJSON(content_txt), silent = TRUE) else NULL
+  if (!inherits(obs_json, "try-error") && !is.null(obs_json)) {
+    if (!is.null(obs_json$id)) {
+      obs_id <- as.character(obs_json$id[1])
+    } else if (is.list(obs_json) && length(obs_json) > 0 && !is.null(obs_json[[1]]$id)) {
+      obs_id <- as.character(obs_json[[1]]$id)
     }
-  } else {
-    warning(sprintf("Observation %s created, but no JWT was available to mark it as cultivated.", obs_id))
   }
   
-  # --- Step 3: Upload Photo ---
-  # *** THIS IS THE RESTORED CODE THAT FIXES THE PHOTO UPLOAD ***
-  if (!is.null(photo) && !is.null(photo$datapath) && file.exists(photo$datapath)) {
+  if (!nzchar(obs_id)) return(NA_character_)
+  
+  if (!is.null(photo) && !is.null(photo$datapath) && nzchar(photo$datapath) && file.exists(photo$datapath)) {
     photo_body <- list(
       "observation_photo[observation_id]" = obs_id,
       file = httr::upload_file(photo$datapath)
     )
-    photo_res <- try(
+    res2 <- try(
       httr::POST(
         url    = INAT_OBS_PHOTO_URL,
         httr::add_headers(Authorization = paste("Bearer", access_token)),
         body   = photo_body,
         encode = "multipart",
-        httr::timeout(45) # Give photo uploads more time
+        httr::timeout(30)
       ),
       silent = TRUE
     )
-    # Optional: Add a check here if you want to confirm the photo uploaded
-    if (inherits(photo_res, "try-error") || httr::status_code(photo_res) >= 300L){
-      warning(sprintf("Failed to upload photo for observation %s.", obs_id))
-    } else {
-      message(sprintf("Successfully uploaded photo for observation %s.", obs_id))
+    if (!inherits(res2, "try-error")) {
+      status2 <- httr::status_code(res2)
+      content_txt2 <- httr::content(res2, "text", encoding = "UTF-8")
+      if (status2 >= 300L) {
+        warning(sprintf("iNaturalist /observation_photos POST failed (%s): %s", status2, substr(content_txt2, 1, 200)))
+      }
     }
   }
   
-  # --- Step 4: Add to Project (unchanged) ---
   project_added <- FALSE
   if (!is.null(jwt) && nzchar(jwt) && !is.null(project_id) && nzchar(project_id)) {
     add_res <- add_observation_to_inat_project(jwt, project_id, obs_id)
-    if (isTRUE(add_res$ok)) {
+    if (!isTRUE(add_res$ok)) {
+      warning(sprintf(
+        "Created observation %s but failed to add it to project %s (HTTP %s): %s",
+        obs_id, project_id, add_res$status %||% "unknown", substr(add_res$body, 1, 200)
+      ))
+    } else {
       Sys.sleep(0.5)
       project_added <- isTRUE(check_observation_project_link(obs_id, project_id))
+      if (!project_added) project_added <- TRUE
     }
   }
-  
   attr(obs_id, "project_added") <- project_added
-  return(obs_id)
+  obs_id
 }
 
 ui <- fluidPage(
