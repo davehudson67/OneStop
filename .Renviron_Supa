@@ -6,18 +6,11 @@ INAT_PROJECT_ID=254569
 INAT_FALLBACK_ACCESS_TOKEN=oo14HGIgS34re8taXR_XlIxL2GVAsEh99L-ltNV1IBo
 INAT_FALLBACK_LABEL=OneStop Plant Alert iNat account
 
-#DB_HOST=quartz-roarer-10164.8nj.gcp-europe-west1.cockroachlabs.cloud
-#DB_PORT=26257
-#DB_NAME=defaultdb
-#DB_USER=drdavehudson
-#DB_PASSWORD=E8TzM3aPqlGtCulKBdhcMg
-#DB_SSLMODE=verify-full
-#DB_SSLROOTCERT=certs/root.crt
-
-DB_HOST=aws-0-eu-central-1.pooler.supabase.com
-DB_PORT=6543
+DB_HOST=db.chaxbmdyvbzmzrlbbrfy.supabase.co
+DB_PORT=5432
 DB_NAME=postgres
-DB_USER=postgres.chaxbmdyvbzmzrlbbrfy
+DB_USER=postgres
 DB_PASSWORD=OneStopPlant67
 DB_SSLMODE=verify-full
-DB_SSLROOTCERT=certs/Supabase.crt
+DB_SSLROOTCERT=certs/root.crt
+
