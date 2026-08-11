@@ -21,11 +21,6 @@ if (!EXIF_AVAILABLE) {
   warning("Package 'exifr' is not installed; photo GPS extraction will be unavailable.")
 }
 
-MAGICK_AVAILABLE <- requireNamespace("magick", quietly = TRUE)
-if (!MAGICK_AVAILABLE) {
-  warning("Package 'magick' is not installed; HEIC/HEIF photos cannot be converted automatically.")
-}
-
 DB_HOST        <- Sys.getenv("DB_HOST")
 DB_PORT        <- Sys.getenv("DB_PORT", unset = "26257")
 DB_NAME        <- Sys.getenv("DB_NAME", unset = "defaultdb")
@@ -66,12 +61,8 @@ db_pool <- dbPool(
   timezone    = "UTC"
 )
 
-local({
-  pool_to_close <- db_pool
-
-  onStop(function() {
-    try(pool::poolClose(pool_to_close), silent = TRUE)
-  })
+onStop(function() {
+  poolClose(db_pool)
 })
 
 ensure_db <- function(pool) {
@@ -86,7 +77,6 @@ ensure_db <- function(pool) {
       include_name TEXT,
       observer_email TEXT,
       site_name TEXT,
-      observation_context TEXT,
       grid_cell TEXT,
       latitude FLOAT8,
       longitude FLOAT8,
@@ -149,18 +139,6 @@ ensure_db <- function(pool) {
   }
   
   
-  if (!"observation_context" %in% existing_cols$column_name) {
-
-    DBI::dbExecute(
-      pool,
-      "
-      ALTER TABLE observations
-      ADD COLUMN observation_context TEXT;
-      "
-    )
-  }
-
-
   # ------------------------------------------------------------
   # IMPORTANT:
   # Synchronise PostgreSQL's identity sequence with existing IDs.
@@ -214,7 +192,6 @@ insert_observation_returning_id <- function(pool, record) {
       include_name,
       observer_email,
       site_name,
-      observation_context,
       grid_cell,
       latitude,
       longitude,
@@ -239,8 +216,7 @@ insert_observation_returning_id <- function(pool, record) {
       $1, $2, $3, $4, $5, $6,
       $7, $8, $9, $10, $11, $12,
       $13, $14, $15, $16, $17, $18,
-      $19, $20, $21, $22, $23, $24,
-      $25
+      $19, $20, $21, $22, $23, $24
     )
     RETURNING id;
   "
@@ -254,7 +230,6 @@ insert_observation_returning_id <- function(pool, record) {
       record$include_name[1],
       record$observer_email[1],
       record$site_name[1],
-      record$observation_context[1],
       record$grid_cell[1],
       record$latitude[1],
       record$longitude[1],
@@ -289,29 +264,6 @@ PLANTNET_KEY <- if (file.exists(KEY_FILE)) trimws(readr::read_file(KEY_FILE)) el
 
 `%||%` <- function(a, b) {
   if (!is.null(a) && length(a) > 0 && !all(is.na(a))) a else b
-}
-
-is_heic_photo <- function(name = NULL, type = NULL) {
-  ext <- tolower(tools::file_ext(as.character(name %||% "")))
-  mime <- tolower(as.character(type %||% ""))
-
-  ext %in% c("heic", "heif") ||
-    mime %in% c("image/heic", "image/heif", "image/heic-sequence", "image/heif-sequence")
-}
-
-convert_heic_to_jpeg <- function(src, dest) {
-  if (!isTRUE(MAGICK_AVAILABLE)) return(FALSE)
-  if (is.null(src) || !nzchar(src) || !file.exists(src)) return(FALSE)
-
-  tryCatch({
-    img <- magick::image_read(src)
-    img <- magick::image_convert(img, format = "jpeg")
-    magick::image_write(img, path = dest, format = "jpeg", quality = 92)
-    isTRUE(file.exists(dest)) && file.info(dest)$size > 0
-  }, error = function(e) {
-    warning("HEIC/HEIF conversion failed: ", conditionMessage(e))
-    FALSE
-  })
 }
 
 translations_path <- "AppTextTranslations.csv"
@@ -795,6 +747,7 @@ push_to_inaturalist <- function(
     project_id = NULL,
     species_name,
     loc = NULL,
+    notes = NULL,
     photos = NULL,
     plant_origin = "cultivated"
 ) {
@@ -814,12 +767,11 @@ push_to_inaturalist <- function(
     return(NA_character_)
   }
   
-  # Survey comments remain in the OneSTOP research database and
-  # are deliberately not copied into the public iNaturalist record.
   body <- list(
     "observation[species_guess]"       = species_name,
     "observation[observed_on_string]" = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
-    "observation[time_zone]"          = "UTC"
+    "observation[time_zone]"          = "UTC",
+    "observation[description]"        = notes %||% ""
   )
   
   if (!is.null(loc) && !is.null(loc$lat) && !is.null(loc$lon)) {
@@ -1059,138 +1011,66 @@ server <- function(input, output, session) {
   }
   
   persist_uploaded_photos <- function(upload_df) {
-    result <- list(photos = NULL, heic_failed = 0L)
-    if (is.null(upload_df) || !is.data.frame(upload_df) || nrow(upload_df) == 0) return(result)
-
+    if (is.null(upload_df) || !is.data.frame(upload_df) || nrow(upload_df) == 0) return(NULL)
+    
     kept <- vector("list", nrow(upload_df))
     n_kept <- 0L
-
+    
     for (i in seq_len(nrow(upload_df))) {
       src <- upload_df$datapath[i]
       if (is.na(src) || !nzchar(src) || !file.exists(src)) next
-
-      original_name <- as.character(upload_df$name[i] %||% paste0("photo_", i))
-      original_type <- as.character(upload_df$type[i] %||% "")
-      original_ext <- tolower(tools::file_ext(original_name))
-      if (!nzchar(original_ext)) original_ext <- "jpg"
-
-      original_copy <- tempfile(
-        pattern = "sentinel_original_",
-        fileext = paste0(".", original_ext)
-      )
-      if (!isTRUE(file.copy(src, original_copy, overwrite = TRUE))) next
-
-      # Read GPS from the original before HEIC -> JPEG conversion.
-      photo_loc <- get_photo_gps(original_copy)
-
-      final_path <- original_copy
-      final_name <- original_name
-      final_type <- original_type
-
-      if (is_heic_photo(original_name, original_type)) {
-        converted_path <- tempfile(pattern = "sentinel_photo_", fileext = ".jpg")
-
-        if (!isTRUE(convert_heic_to_jpeg(original_copy, converted_path))) {
-          result$heic_failed <- result$heic_failed + 1L
-          try(unlink(original_copy), silent = TRUE)
-          if (file.exists(converted_path)) try(unlink(converted_path), silent = TRUE)
-          next
-        }
-
-        final_path <- converted_path
-        final_name <- paste0(tools::file_path_sans_ext(original_name), ".jpg")
-        final_type <- "image/jpeg"
-      }
-
+      
+      ext <- tools::file_ext(upload_df$name[i] %||% "")
+      if (!nzchar(ext)) ext <- "jpg"
+      dest <- tempfile(pattern = "sentinel_photo_", fileext = paste0(".", ext))
+      
+      if (!isTRUE(file.copy(src, dest, overwrite = TRUE))) next
+      
       row <- upload_df[i, , drop = FALSE]
-      row$datapath <- final_path
-      row$name <- final_name
-      row$type <- final_type
-      row$source_datapath <- original_copy
-      row$photo_lat <- if (is.null(photo_loc)) NA_real_ else photo_loc$lat
-      row$photo_lon <- if (is.null(photo_loc)) NA_real_ else photo_loc$lon
-
+      row$datapath <- dest
       n_kept <- n_kept + 1L
       kept[[n_kept]] <- row
     }
-
-    if (n_kept > 0L) result$photos <- do.call(rbind, kept[seq_len(n_kept)])
-    result
+    
+    if (n_kept == 0L) return(NULL)
+    do.call(rbind, kept[seq_len(n_kept)])
   }
-
-  cleanup_photo_rows <- function(photo_rows) {
-    if (is.null(photo_rows) || !is.data.frame(photo_rows) || nrow(photo_rows) == 0) return(invisible(NULL))
-
-    paths <- character(0)
-    if ("datapath" %in% names(photo_rows)) paths <- c(paths, as.character(photo_rows$datapath))
-    if ("source_datapath" %in% names(photo_rows)) paths <- c(paths, as.character(photo_rows$source_datapath))
-    paths <- unique(paths[!is.na(paths) & nzchar(paths)])
-
-    for (path in paths) if (file.exists(path)) try(unlink(path), silent = TRUE)
-    invisible(NULL)
-  }
-
-  photo_location_from_active <- function(photos) {
-    if (is.null(photos) || !is.data.frame(photos) || nrow(photos) == 0) return(NULL)
-
-    if (all(c("photo_lat", "photo_lon") %in% names(photos))) {
-      lat <- suppressWarnings(as.numeric(photos$photo_lat))
-      lon <- suppressWarnings(as.numeric(photos$photo_lon))
-      valid <- which(is.finite(lat) & is.finite(lon) & lat >= -90 & lat <= 90 & lon >= -180 & lon <= 180)
-
-      if (length(valid) > 0) {
-        i <- valid[1]
-        return(list(lat = lat[i], lon = lon[i], source = "photo"))
-      }
-    }
-
-    source_paths <- if ("source_datapath" %in% names(photos)) photos$source_datapath else photos$datapath
-    get_photo_gps(source_paths)
-  }
-
+  
   try_photo_location <- function() {
     if (!is.null(current_location())) return(invisible(NULL))
+    
     photos <- get_active_photos()
     if (is.null(photos)) return(invisible(NULL))
-
-    photo_loc <- photo_location_from_active(photos)
+    
+    photo_loc <- get_photo_gps(photos$datapath)
     if (is.null(photo_loc)) return(invisible(NULL))
-
+    
     current_location(photo_loc)
+    
     leafletProxy("location_map") %>%
       clearMarkers() %>%
       addMarkers(lng = photo_loc$lon, lat = photo_loc$lat) %>%
       setView(lng = photo_loc$lon, lat = photo_loc$lat, zoom = 14)
-
+    
     showNotification(
       tr("UX_PHOTO_LOCATION_FOUND", "Location found in the photo and recorded."),
       type = "message",
       duration = 6
     )
   }
-
+  
   add_uploaded_photos <- function(upload_df) {
-    persisted <- persist_uploaded_photos(upload_df)
-    new_photos <- persisted$photos
-
-    if (persisted$heic_failed > 0L) {
-      showNotification(
-        tr(
-          "UX_HEIC_CONVERSION_FAILED",
-          "One or more HEIC/HEIF photos could not be converted. Please choose JPEG/PNG photos, or ask the server administrator to enable HEIC conversion."
-        ),
-        type = "warning",
-        duration = 10
-      )
-    }
-
+    new_photos <- persist_uploaded_photos(upload_df)
     if (is.null(new_photos)) return(invisible(NULL))
-
+    
     old <- get_active_photos()
     slots_left <- 3L - if (is.null(old)) 0L else nrow(old)
-
+    
     if (slots_left <= 0L) {
-      cleanup_photo_rows(new_photos)
+      # These were copied to temporary files but cannot be retained.
+      for (path in as.character(new_photos$datapath)) {
+        if (!is.na(path) && nzchar(path) && file.exists(path)) try(unlink(path), silent = TRUE)
+      }
       showNotification(
         tr("UX_MAX_PHOTOS", "A maximum of 3 photos can be used for each observation."),
         type = "warning",
@@ -1198,10 +1078,12 @@ server <- function(input, output, session) {
       )
       return(invisible(NULL))
     }
-
+    
     if (nrow(new_photos) > slots_left) {
       discarded <- new_photos[(slots_left + 1L):nrow(new_photos), , drop = FALSE]
-      cleanup_photo_rows(discarded)
+      for (path in as.character(discarded$datapath)) {
+        if (!is.na(path) && nzchar(path) && file.exists(path)) try(unlink(path), silent = TRUE)
+      }
       new_photos <- head(new_photos, slots_left)
       showNotification(
         tr("UX_MAX_PHOTOS", "A maximum of 3 photos can be used for each observation."),
@@ -1209,23 +1091,31 @@ server <- function(input, output, session) {
         duration = 5
       )
     }
-
+    
     combined <- if (is.null(old)) new_photos else rbind(old, new_photos)
     active_photos(combined)
     try_photo_location()
   }
-
+  
   cleanup_active_photos <- function() {
-    cleanup_photo_rows(active_photos())
+    photos <- active_photos()
+    if (!is.null(photos) && is.data.frame(photos) && "datapath" %in% names(photos)) {
+      paths <- unique(as.character(photos$datapath))
+      paths <- paths[!is.na(paths) & nzchar(paths)]
+      for (path in paths) {
+        if (file.exists(path)) {
+          try(unlink(path), silent = TRUE)
+        }
+      }
+    }
     active_photos(NULL)
   }
-
+  
   reset_record_inputs <- function() {
     shinyjs::reset("survey1_inputs")
     shinyjs::reset("survey2_inputs")
     
     updateTextInput(session, "site_name", value = "")
-    updateSelectInput(session, "observation_context", selected = "")
     updateTextInput(session, "species_name", value = "")
     updateTextInput(session, "source_of_plant_other", value = "")
     updateTextAreaInput(session, "notes", value = "")
@@ -1469,10 +1359,6 @@ $(document).on('click', '#show_location_map', function() {
   })
   
   tr <- function(id, default = NULL) tr_text(id, selected_language(), default)
-
-  is_garden_context <- function(x) {
-    is.null(x) || !nzchar(x) || x %in% c("my_garden", "other_garden", "allotment")
-  }
   
   next_label <- function() tagList(tr("UX_NEXT", "Next"), " ", icon("play"))
   back_label <- function() tagList(icon("arrow-left"), " ", tr("UX_BACK", "Back"))
@@ -1499,7 +1385,7 @@ $(document).on('click', '#show_location_map', function() {
         p(
           tr("H_02", "Help us understand how garden plants behave and spread."),
           " ",
-          tr("H_03", "This app lets you identify plants, record where you found them and, where relevant, answer a few questions about how they behave in gardens.")
+          tr("H_03", "This app lets you identify plants with PlantNet, answer a few questions about how they behave in your garden, and share anonymised records.")
         ),
         hr()
       )
@@ -1632,7 +1518,7 @@ $(document).on('click', '#show_location_map', function() {
               hr(),
               p(tr("U_27", "Your data will help us understand the spread of potentially invasive alien species and inform policy in that regard. If you want to get more information on invasive alien species or about the project, please visit"), " ", tags$a("https://onestop-project.eu/", href = "https://onestop-project.eu/", target = "_blank"), "."),
               br(),
-              p(tags$strong(tr("U_28", "Data policy:")), " ", tr("U_29", "The collected survey data will only be used for research purposes and made available in an open access format. Your survey responses will remain anonymous. If you connect your own iNaturalist account, the plant observation, photographs and location will be associated with that account and covered by iNaturalist’s terms and conditions. If you do not connect an account, the observation can instead be uploaded using the project’s iNaturalist account. Survey answers and free-text comments are kept in the OneSTOP research database and are not sent to iNaturalist. In both cases, observations submitted through this app will be added to the project on iNaturalist.")),
+              p(tags$strong(tr("U_28", "Data policy:")), " ", tr("U_29", "The collected survey data will only be used for research purposes and made available in an open access format. Your survey responses will remain anonymous. If you connect your own iNaturalist account, your species records will be associated with that account and covered by iNaturalist’s terms and conditions. If you do not connect an account, records will instead be uploaded using the project’s iNaturalist account. In both cases, observations submitted through this app will be added to the project on iNaturalist.")),
               br(),
               p(tr("U_30", "If you want to receive updates about the results, please provide your email address below. This will be stored securely in line with GDPR policies and separate from your survey answers.")),
               textInput("observer_email", tr("U_31", "Your email address (optional, for project updates)"), value = isolate(input$observer_email %||% "")),
@@ -1709,33 +1595,6 @@ $(document).on('click', '#show_location_map', function() {
                   tr("ID_09", "Where did you survey? (optional)"),
                   value = isolate(input$site_name %||% ""),
                   placeholder = tr("ID_10", "e.g., Jephson Gardens, Leamington")
-                ),
-                selectInput(
-                  "observation_context",
-                  tr("UX_OBSERVATION_CONTEXT", "Where are you observing this plant? (optional)"),
-                  choices = stats::setNames(
-                    c("", "my_garden", "other_garden", "allotment", "park_public_garden",
-                      "other_public_green_space", "woodland_countryside", "roadside_verge", "other"),
-                    c(
-                      tr("UX_CONTEXT_SELECT", "Please select..."),
-                      tr("UX_CONTEXT_MY_GARDEN", "My garden"),
-                      tr("UX_CONTEXT_OTHER_GARDEN", "Someone else's garden"),
-                      tr("UX_CONTEXT_ALLOTMENT", "Allotment"),
-                      tr("UX_CONTEXT_PARK", "Park or public garden"),
-                      tr("UX_CONTEXT_PUBLIC_GREEN", "Other public green space"),
-                      tr("UX_CONTEXT_WOODLAND", "Woodland / countryside"),
-                      tr("UX_CONTEXT_ROADSIDE", "Roadside / verge"),
-                      tr("UX_CONTEXT_OTHER", "Other")
-                    )
-                  ),
-                  selected = isolate(input$observation_context %||% "")
-                ),
-                tags$p(
-                  class = "text-muted",
-                  tr(
-                    "UX_CONTEXT_HELP",
-                    "This helps us show only the questions that are relevant to the place where you found the plant."
-                  )
                 ),
                 textInput(
                   "species_name",
@@ -1817,24 +1676,11 @@ $(document).on('click', '#show_location_map', function() {
               div(
                 id = "survey1_inputs",
                 h4(tr("S1_01", "Spread, control and disposal")),
-                conditionalPanel(
-                  condition = "input.observation_context == '' || input.observation_context == 'my_garden' || input.observation_context == 'other_garden' || input.observation_context == 'allotment'",
-                  radioButtons("spread_beyond", tr("S1_02", "Has the plant spread beyond where it was initially planted, or would it spread without control?"), choices = c(tr("UX_YES", "Yes"), tr("UX_NO", "No"), tr("UX_DONT_KNOW", "I don't know")), selected = isolate(input$spread_beyond %||% character(0))),
-                  checkboxGroupInput("spread_mode", tr("S1_06", "How does the plant spread here? (tick all that apply)"), choices = c(tr("S1_07", "it doesn’t spread"), tr("S1_08", "seeds"), tr("S1_09", "Underground rhizomes/roots"), tr("S1_10", "Aboveground runners"), tr("S1_11", "bulbs"), tr("S1_12", "don’t know"), tr("S1_13", "other")), selected = isolate(input$spread_mode %||% character(0))),
-                  radioButtons("control_effectiveness", tr("S1_14", "How effective is the effort to control the plant?"), choices = c(tr("S1_15", "I don’t control the plant"), tr("S1_16", "Ineffective (expansion)"), tr("S1_17", "Poorly effective (status quo)"), tr("S1_18", "Effective (area reduction)"), tr("S1_19", "Very effective (eradication)")), selected = isolate(input$control_effectiveness %||% character(0))),
-                  checkboxGroupInput("control_methods", tr("S1_20", "How is this plant controlled? (tick all that apply)"), choices = c(tr("S1_21", "digging"), tr("S1_22", "pulling"), tr("S1_23", "chemical"), tr("S1_24", "cutting"), tr("S1_25", "mulching"), tr("S1_13", "other")), selected = isolate(input$control_methods %||% character(0))),
-                  checkboxGroupInput("disposal_methods", tr("S1_26", "How is this plant disposed of? (tick all that apply)"), choices = c(tr("S1_27", "home composting"), tr("S1_28", "green waste"), tr("S1_29", "other waste collection"), tr("S1_13", "other")), selected = isolate(input$disposal_methods %||% character(0)))
-                ),
-                conditionalPanel(
-                  condition = "input.observation_context != '' && input.observation_context != 'my_garden' && input.observation_context != 'other_garden' && input.observation_context != 'allotment'",
-                  div(
-                    class = "alert alert-info",
-                    tr(
-                      "UX_NON_GARDEN_SURVEY1",
-                      "Because this record is from a park, public space or other non-garden setting, the garden management questions on this page do not apply. Select Next to continue."
-                    )
-                  )
-                )
+                radioButtons("spread_beyond", tr("S1_02", "Has the plant spread beyond where you initially planted it, or would it spread without control?"), choices = c(tr("UX_YES", "Yes"), tr("UX_NO", "No"), tr("UX_DONT_KNOW", "I don't know")), selected = isolate(input$spread_beyond %||% character(0))),
+                checkboxGroupInput("spread_mode", tr("S1_06", "How does the plant spread in your garden? (tick all that apply)"), choices = c(tr("S1_07", "it doesn’t spread"), tr("S1_08", "seeds"), tr("S1_09", "Underground rhizomes/roots"), tr("S1_10", "Aboveground runners"), tr("S1_11", "bulbs"), tr("S1_12", "don’t know"), tr("S1_13", "other")), selected = isolate(input$spread_mode %||% character(0))),
+                radioButtons("control_effectiveness", tr("S1_14", "How effective is your effort to control the plant?"), choices = c(tr("S1_15", "I don’t control the plant"), tr("S1_16", "Ineffective (expansion)"), tr("S1_17", "Poorly effective (status quo)"), tr("S1_18", "Effective (area reduction)"), tr("S1_19", "Very effective (eradication)")), selected = isolate(input$control_effectiveness %||% character(0))),
+                checkboxGroupInput("control_methods", tr("S1_20", "How do you control this plant? (tick all that apply)"), choices = c(tr("S1_21", "digging"), tr("S1_22", "pulling"), tr("S1_23", "chemical"), tr("S1_24", "cutting"), tr("S1_25", "mulching"), tr("S1_13", "other")), selected = isolate(input$control_methods %||% character(0))),
+                checkboxGroupInput("disposal_methods", tr("S1_26", "How do you dispose of this plant? (tick all that apply)"), choices = c(tr("S1_27", "home composting"), tr("S1_28", "green waste"), tr("S1_29", "other waste collection"), tr("S1_13", "other")), selected = isolate(input$disposal_methods %||% character(0)))
               ),
               hr(),
               div(class = "button-container-space-between", actionButton("back_survey1", label = back_label(), class = "btn-secondary"), actionButton("next_survey1", label = next_label(), class = "btn-primary"))
@@ -1852,29 +1698,19 @@ $(document).on('click', '#show_location_map', function() {
               div(
                 id = "survey2_inputs",
                 h4(tr("S2_01", "Origin, impacts and comments")),
-                conditionalPanel(
-                  condition = "input.observation_context == '' || input.observation_context == 'my_garden' || input.observation_context == 'other_garden' || input.observation_context == 'allotment'",
-                  checkboxGroupInput("introduction_routes", tr("S2_02", "How do you think this plant came into the garden or allotment? (tick all that apply)"), choices = c(tr("S2_03", "It was already there"), tr("S2_04", "I introduced it"), tr("S2_05", "It spread from the direct vicinity"), tr("UX_DONT_KNOW", "I don't know"), tr("S1_13", "other")), selected = isolate(input$introduction_routes %||% character(0))),
-                  checkboxGroupInput("source_of_plant", tr("S2_06", "Where did you get it? (tick all that apply)"), choices = c(tr("S2_07", "Garden center"), tr("S2_08", "Plant fair"), tr("S2_09", "I got it through a friend or another gardener"), tr("S2_10", "I bought it online from a nursery"), tr("S2_11", "I bought it on an online e-trade platform (e.g. ebay, tweedehands, etsy, …)"), tr("S2_12", "I got it from a big retailer (e.g. supermarket, DIY store)"), tr("S2_14", "Other, please state.")), selected = isolate(input$source_of_plant %||% character(0))),
-                  textInput(
-                    "source_of_plant_other",
-                    tr("S2_14B", "Additional details on where you got the plant (optional)"),
-                    value = isolate(input$source_of_plant_other %||% ""),
-                    placeholder = tr("S2_14C", "e.g. local market, neighbour, plant swap, roadside stall")
-                  ),
-                  radioButtons("outside_garden", tr("S2_15", "Is the plant growing locally outside the garden or allotment?"), choices = c(tr("UX_YES", "Yes"), tr("UX_NO", "No"), tr("UX_DONT_KNOW", "I don't know")), selected = isolate(input$outside_garden %||% character(0)))
+                checkboxGroupInput("introduction_routes", tr("S2_02", "How do you think this plant came into your garden? (tick all that apply)"), choices = c(tr("S2_03", "It was already in the garden"), tr("S2_04", "I introduced it"), tr("S2_05", "It spread from the direct vicinity of my garden"), tr("UX_DONT_KNOW", "I don't know"), tr("S1_13", "other")), selected = isolate(input$introduction_routes %||% character(0))),
+                checkboxGroupInput("source_of_plant", tr("S2_06", "Where did you get it? (tick all that apply)"), choices = c(tr("S2_07", "Garden center"), tr("S2_08", "Plant fair"), tr("S2_09", "I got it through a friend or another gardener"), tr("S2_10", "I bought it online from a nursery"), tr("S2_11", "I bought it on an online e-trade platform (e.g. ebay, tweedehands, etsy, …)"), tr("S2_12", "I got it from a big retailer (e.g. supermarket, DIY store)"), tr("S2_14", "Other, please state.")), selected = isolate(input$source_of_plant %||% character(0))),
+                textInput(
+                  "source_of_plant_other",
+                  tr("S2_14B", "Additional details on where you got the plant (optional)"),
+                  value = isolate(input$source_of_plant_other %||% ""),
+                  placeholder = tr("S2_14C", "e.g. local market, neighbour, plant swap, roadside stall")
                 ),
-                radioButtons("warning_label", tr("S2_16", "In your opinion, should the plant be sold with a label warning buyers of potential control difficulties?"), choices = c(tr("UX_YES", "Yes"), tr("UX_NO", "No"), tr("UX_DONT_KNOW", "I don't know")), selected = isolate(input$warning_label %||% character(0))),
-                radioButtons("outcompeted", tr("S2_17", "Does this plant appear to be outcompeting other plants at this location? For instance, have other plants been overgrown or disappeared?"), choices = c(tr("UX_YES", "Yes"), tr("UX_NO", "No"), tr("UX_DONT_KNOW", "I don't know")), selected = isolate(input$outcompeted %||% character(0))),
+                radioButtons("outside_garden", tr("S2_15", "Is the plant growing locally outside your garden?"), choices = c(tr("UX_YES", "Yes"), tr("UX_NO", "No"), tr("UX_DONT_KNOW", "I don't know")), selected = isolate(input$outside_garden %||% character(0))),
+                radioButtons("warning_label", tr("S2_16", "In your opinion, should the plant be sold with a label warning buyers of potential control difficulties in their garden?"), choices = c(tr("UX_YES", "Yes"), tr("UX_NO", "No"), tr("UX_DONT_KNOW", "I don't know")), selected = isolate(input$warning_label %||% character(0))),
+                radioButtons("outcompeted", tr("S2_17", "Has this plant outcompeted other plants in your garden? For instance, have other plants been overgrown or disappeared?"), choices = c(tr("UX_YES", "Yes"), tr("UX_NO", "No"), tr("UX_DONT_KNOW", "I don't know")), selected = isolate(input$outcompeted %||% character(0))),
                 selectInput("coverage_dafor", tr("UX_COVERAGE", "Personal assessment of coverage (DAFOR scale)"), choices = c("", tr("UX_DOMINANT", "Dominant"), tr("UX_ABUNDANT", "Abundant"), tr("UX_FREQUENT", "Frequent"), tr("UX_OCCASIONAL", "Occasional"), tr("UX_RARE", "Rare"), tr("UX_DONT_KNOW", "I don't know")), selected = isolate(input$coverage_dafor %||% "")),
-                textAreaInput("notes", tr("S2_26", "Any other comments about this plant?"), rows = 3, value = isolate(input$notes %||% "")),
-                tags$p(
-                  class = "text-muted",
-                  tr(
-                    "UX_NOTES_RESEARCH_ONLY",
-                    "Your comments are saved with the OneSTOP survey only and are not copied to iNaturalist."
-                  )
-                )
+                textAreaInput("notes", tr("S2_26", "Any other comments about this plant?"), rows = 3, value = isolate(input$notes %||% ""))
               ),
               hr(),
               div(class = "button-container-space-between", actionButton("back_survey2", label = back_label(), class = "btn-secondary"), actionButton("save_btn", tr("S2_27", "Save & Go to Results"), class = "btn-success btn-lg", icon = icon("save")))
@@ -2153,7 +1989,7 @@ $(document).on('click', '#show_location_map', function() {
       return()
     }
     
-    photo_loc <- photo_location_from_active(photos)
+    photo_loc <- get_photo_gps(photos$datapath)
     
     if (is.null(photo_loc)) {
       showNotification(
@@ -2217,13 +2053,9 @@ $(document).on('click', '#show_location_map', function() {
           
           div(
             class = "photo-preview-label",
-            paste(tr("UX_PHOTO", "Photo"), i),
-            br(),
-            actionButton(
-              paste0("remove_photo_", i),
-              tr("UX_REMOVE_PHOTO", "Remove"),
-              icon = icon("trash"),
-              class = "btn btn-outline-danger btn-sm"
+            paste(
+              tr("UX_PHOTO", "Photo"),
+              i
             )
           )
         )
@@ -2234,49 +2066,19 @@ $(document).on('click', '#show_location_map', function() {
   for (i in 1:3) {
     local({
       ii <- i
-
       output[[paste0("photo_preview_", ii)]] <- renderImage({
         photos <- get_active_photos()
         req(!is.null(photos), nrow(photos) >= ii)
+        
         list(
           src = photos$datapath[ii],
           contentType = photos$type[ii] %||% "image/jpeg",
           width = "100%"
         )
       }, deleteFile = FALSE)
-
-      observeEvent(input[[paste0("remove_photo_", ii)]], {
-        photos <- get_active_photos()
-        if (is.null(photos) || nrow(photos) < ii) return()
-
-        removed <- photos[ii, , drop = FALSE]
-        remaining <- photos[-ii, , drop = FALSE]
-        cleanup_photo_rows(removed)
-
-        if (nrow(remaining) == 0) active_photos(NULL) else active_photos(remaining)
-        id_results(NULL)
-
-        loc <- current_location()
-        if (!is.null(loc) && identical(loc$source %||% "", "photo")) {
-          current_location(NULL)
-          leafletProxy("location_map") %>% clearMarkers()
-          try_photo_location()
-
-          if (is.null(current_location())) {
-            showNotification(
-              tr(
-                "UX_PHOTO_LOCATION_REMOVED",
-                "The location came from a removed photo and has been cleared. Please use another photo, device GPS or the map."
-              ),
-              type = "warning",
-              duration = 8
-            )
-          }
-        }
-      }, ignoreInit = TRUE)
     })
   }
-
+  
   observeEvent(input$geolocation, {
     
     loc <- input$geolocation
@@ -2591,7 +2393,6 @@ $(document).on('click', '#show_location_map', function() {
       ID = df$id,
       Date = as.character(as.Date(df$timestamp)),
       Site = as.character(df$site_name),
-      Context = if ("observation_context" %in% names(df)) as.character(df$observation_context) else rep("", nrow(df)),
       Species = as.character(df$species_name),
       Common.Name = if ("common_name" %in% names(df)) as.character(df$common_name) else rep("", nrow(df)),
       Email = as.character(df$observer_email %||% ""),
@@ -2880,21 +2681,11 @@ $(document).on('click', '#show_location_map', function() {
     # PREPARE OPTIONAL SURVEY VALUES
     # ============================================================
     
-    garden_context <- is_garden_context(
-      input$observation_context %||% ""
+    source_vals <- input$source_of_plant %||% character(0)
+    
+    source_other <- trimws(
+      input$source_of_plant_other %||% ""
     )
-
-    source_vals <- if (isTRUE(garden_context)) {
-      input$source_of_plant %||% character(0)
-    } else {
-      character(0)
-    }
-
-    source_other <- if (isTRUE(garden_context)) {
-      trimws(input$source_of_plant_other %||% "")
-    } else {
-      ""
-    }
     
     source_combined <- source_vals
     
@@ -2945,8 +2736,6 @@ $(document).on('click', '#show_location_map', function() {
       
       site_name             = site_name_value,
       
-      observation_context   = input$observation_context %||% NA_character_,
-      
       grid_cell             = NA_character_,
       
       latitude              = lat_value,
@@ -2954,10 +2743,9 @@ $(document).on('click', '#show_location_map', function() {
       
       species_name          = species_name_value,
       
-      spread_beyond         = if (isTRUE(garden_context)) input$spread_beyond %||% NA_character_ else NA_character_,
+      spread_beyond         = input$spread_beyond %||% NA_character_,
       
       spread_mode = if (
-        isTRUE(garden_context) &&
         !is.null(input$spread_mode) &&
         length(input$spread_mode) > 0
       ) {
@@ -2969,10 +2757,9 @@ $(document).on('click', '#show_location_map', function() {
         ""
       },
       
-      control_effectiveness = if (isTRUE(garden_context)) input$control_effectiveness %||% NA_character_ else NA_character_,
+      control_effectiveness = input$control_effectiveness %||% NA_character_,
       
       control_methods = if (
-        isTRUE(garden_context) &&
         !is.null(input$control_methods) &&
         length(input$control_methods) > 0
       ) {
@@ -2985,7 +2772,6 @@ $(document).on('click', '#show_location_map', function() {
       },
       
       disposal_methods = if (
-        isTRUE(garden_context) &&
         !is.null(input$disposal_methods) &&
         length(input$disposal_methods) > 0
       ) {
@@ -2998,7 +2784,6 @@ $(document).on('click', '#show_location_map', function() {
       },
       
       introduction_routes = if (
-        isTRUE(garden_context) &&
         !is.null(input$introduction_routes) &&
         length(input$introduction_routes) > 0
       ) {
@@ -3021,11 +2806,8 @@ $(document).on('click', '#show_location_map', function() {
         ""
       },
       
-      outside_garden = if (isTRUE(garden_context)) {
-        input$outside_garden %||% NA_character_
-      } else {
-        NA_character_
-      },
+      outside_garden = input$outside_garden %||%
+        NA_character_,
       
       warning_label = input$warning_label %||%
         NA_character_,
@@ -3171,6 +2953,7 @@ $(document).on('click', '#show_location_map', function() {
               lat = lat_value,
               lon = lon_value
             ),
+            notes        = input$notes %||% "",
             photos       = photos,
             plant_origin = input$plant_origin %||%
               "cultivated"
@@ -3368,7 +3151,6 @@ $(document).on('click', '#show_location_map', function() {
     display_df <- data.frame(
       Date    = as.character(as.Date(df$timestamp)),
       Site    = as.character(df$site_name),
-      Context = if ("observation_context" %in% names(df)) as.character(df$observation_context) else rep("", nrow(df)),
       Species = as.character(df$species_name),
       stringsAsFactors = FALSE
     )
@@ -3415,15 +3197,7 @@ $(document).on('click', '#show_location_map', function() {
         data = df_clean,
         lng = ~longitude,
         lat = ~latitude,
-        popup = ~paste0(
-          "<b>", species_name, "</b>",
-          ifelse(is.na(site_name) | !nzchar(site_name), "", paste0("<br>", site_name)),
-          ifelse(
-            is.na(observation_context) | !nzchar(observation_context),
-            "",
-            paste0("<br><small>", observation_context, "</small>")
-          )
-        ),
+        popup = ~paste0("<b>", species_name, "</b>", ifelse(is.na(site_name) | !nzchar(site_name), "", paste0("<br>", site_name))),
         radius = 7,
         stroke = TRUE,
         weight = 1,

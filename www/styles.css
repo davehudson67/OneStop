@@ -405,3 +405,361 @@
   border-color: #198754;
 }
 
+/* ==========================================================
+   SENTINEL GARDEN - MOBILE LAYOUT FIXES
+   ========================================================== */
+
+
+/* ----------------------------------------------------------
+   GENERAL MOBILE SAFETY
+   ---------------------------------------------------------- */
+
+* {
+  box-sizing: border-box;
+}
+
+img {
+  max-width: 100%;
+}
+
+
+/* ----------------------------------------------------------
+   iNATURALIST STATUS
+   Stop connected status becoming a large green circle
+   ---------------------------------------------------------- */
+
+.inat-status-container {
+  width: 100%;
+  margin-top: 12px;
+}
+
+.inat-status {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto !important;
+  min-height: 0 !important;
+
+  padding: 12px 16px;
+
+  border-radius: 10px !important;
+
+  text-align: left;
+  line-height: 1.4;
+
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.inat-status-connected {
+  border-radius: 10px !important;
+}
+
+.inat-status-disconnected {
+  border-radius: 10px !important;
+}
+
+
+/* The project membership message underneath */
+.inat-project-container {
+  width: 100%;
+  margin-top: 10px;
+  line-height: 1.4;
+}
+
+.inat-project-container > div {
+  width: 100%;
+}
+
+
+/* ----------------------------------------------------------
+   FILE UPLOAD CONTROLS
+   ---------------------------------------------------------- */
+
+.photo-input-buttons {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.photo-input-buttons .form-group {
+  flex: 1 1 0;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+/* Shiny file input outer area */
+.photo-input-buttons .shiny-input-container {
+  width: 100% !important;
+}
+
+/* Make the visible upload control occupy full available width */
+.photo-input-buttons .input-group {
+  width: 100%;
+}
+
+/* Main file buttons */
+.photo-input-buttons .btn-file,
+.photo-input-buttons .input-group-btn,
+.photo-input-buttons .input-group-text {
+  min-width: 0;
+}
+
+/* Prevent button text overflowing */
+.photo-input-buttons .btn {
+  white-space: normal;
+  line-height: 1.25;
+  min-height: 56px;
+}
+
+
+/* ----------------------------------------------------------
+   PHOTO PREVIEWS
+   ---------------------------------------------------------- */
+
+.photo-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+
+  width: 100%;
+  margin: 12px 0 18px 0;
+}
+
+.photo-preview-card {
+  min-width: 0;
+
+  background: rgba(255, 255, 255, 0.45);
+
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.photo-preview-image {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+
+  background: #eeeeee;
+}
+
+.photo-preview-image .shiny-image-output {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.photo-preview-image .shiny-image-output img {
+  display: block;
+
+  width: 100% !important;
+  height: 100% !important;
+
+  object-fit: cover;
+  object-position: center;
+}
+
+.photo-preview-label {
+  padding: 5px 7px;
+
+  font-size: 0.85rem;
+  line-height: 1.2;
+
+  color: #666;
+  text-align: center;
+}
+
+
+/* ----------------------------------------------------------
+   IDENTIFY BUTTON
+   Ensure it never overlaps previews
+   ---------------------------------------------------------- */
+
+#id_btn {
+  display: block;
+
+  width: 100%;
+  clear: both;
+
+  margin-top: 6px;
+  margin-bottom: 16px;
+
+  position: relative;
+  z-index: 1;
+}
+
+
+/* ----------------------------------------------------------
+   RESULT ROWS
+   ---------------------------------------------------------- */
+
+.id-result-row {
+  margin-left: 0;
+  margin-right: 0;
+
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.id-result-row strong,
+.id-result-row em,
+.id-result-row small {
+  overflow-wrap: anywhere;
+}
+
+
+/* ----------------------------------------------------------
+   TAB BAR
+   Keep it usable on narrow phones
+   ---------------------------------------------------------- */
+
+.nav-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+
+  width: 100%;
+
+  overflow-x: auto;
+  overflow-y: hidden;
+
+  -webkit-overflow-scrolling: touch;
+}
+
+.nav-tabs .nav-item {
+  flex: 0 0 auto;
+}
+
+.nav-tabs .nav-link {
+  white-space: nowrap;
+}
+
+
+/* ==========================================================
+   PHONE-SPECIFIC
+   ========================================================== */
+
+@media (max-width: 767px) {
+
+  /* Reduce wasted horizontal space */
+  .container,
+  .container-fluid {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .well {
+    padding: 16px;
+  }
+
+
+  /* ----------------------------------------------
+     Photo buttons
+     Stack them cleanly on narrow screens
+     ---------------------------------------------- */
+
+  .photo-input-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .photo-input-buttons .form-group {
+    width: 100%;
+  }
+
+
+  /* ----------------------------------------------
+     Photos
+     2 photos = side-by-side
+     3rd wraps underneath
+     ---------------------------------------------- */
+
+  .photo-preview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+
+  /* ----------------------------------------------
+     Identification results
+     ---------------------------------------------- */
+
+  .id-result-row {
+    padding: 14px 0;
+  }
+
+  .id-result-row .col-sm-3,
+  .id-result-row .col-sm-6 {
+    margin-bottom: 8px;
+  }
+
+
+  /* ----------------------------------------------
+     Location buttons
+     Give them breathing space
+     ---------------------------------------------- */
+
+  #get_photo_location_btn,
+  #get_location_btn,
+  #show_location_map {
+    width: 100%;
+    margin-bottom: 8px;
+  }
+
+
+  /* ----------------------------------------------
+     Navigation buttons
+     ---------------------------------------------- */
+
+  .button-container-space-between {
+    gap: 10px;
+  }
+
+  .button-container-space-between .btn {
+    min-width: 105px;
+  }
+}
+
+
+/* Extra-small phones */
+@media (max-width: 430px) {
+
+  .photo-input-buttons {
+    grid-template-columns: 1fr;
+  }
+
+  .photo-preview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .nav-tabs .nav-link {
+    padding-left: 12px;
+    padding-right: 12px;
+    font-size: 0.95rem;
+  }
+}
+
+.inat-connect-block {
+  width: 100%;
+}
+
+.inat-connect-block > .shiny-html-output {
+  width: 100%;
+}
+
+.inat-status-container {
+  margin-top: 12px;
+  margin-bottom: 10px;
+}
+
+.inat-project-container {
+  margin-top: 8px;
+  margin-bottom: 12px;
+}
+
+#inat_login_btn {
+  width: 100%;
+  margin-bottom: 12px;
+}
