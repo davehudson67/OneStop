@@ -1494,7 +1494,7 @@ $(document).on('click', '#show_location_map', function() {
         div(
           class = "welcome-header",
           tags$img(src = "logo.png", height = "80px"),
-          h3(tr("H_01", "Sentinel Garden Survey"))
+          h3(tr("H_01", "Plant Alert: Sentinel Garden Survey"))
         ),
         p(
           tr("H_02", "Help us understand how garden plants behave and spread."),
@@ -1712,20 +1712,24 @@ $(document).on('click', '#show_location_map', function() {
                 ),
                 selectInput(
                   "observation_context",
-                  tr("UX_OBSERVATION_CONTEXT", "Where are you observing this plant? (optional)"),
+                  tr(
+                    "UX_OBSERVATION_CONTEXT",
+                    "Where are you observing this plant? (optional)"
+                  ),
                   choices = stats::setNames(
-                    c("", "my_garden", "other_garden", "allotment", "park_public_garden",
-                      "other_public_green_space", "woodland_countryside", "roadside_verge", "other"),
+                    c(
+                      "",
+                      "my_garden",
+                      "other_garden",
+                      "allotment",
+                      "park_public_garden"
+                    ),
                     c(
                       tr("UX_CONTEXT_SELECT", "Please select..."),
                       tr("UX_CONTEXT_MY_GARDEN", "My garden"),
                       tr("UX_CONTEXT_OTHER_GARDEN", "Someone else's garden"),
                       tr("UX_CONTEXT_ALLOTMENT", "Allotment"),
-                      tr("UX_CONTEXT_PARK", "Park or public garden"),
-                      tr("UX_CONTEXT_PUBLIC_GREEN", "Other public green space"),
-                      tr("UX_CONTEXT_WOODLAND", "Woodland / countryside"),
-                      tr("UX_CONTEXT_ROADSIDE", "Roadside / verge"),
-                      tr("UX_CONTEXT_OTHER", "Other")
+                      tr("UX_CONTEXT_PARK", "Park or public garden")
                     )
                   ),
                   selected = isolate(input$observation_context %||% "")
