@@ -1493,14 +1493,56 @@ $(document).on('click', '#show_location_map', function() {
         12,
         div(
           class = "welcome-header",
-          tags$img(src = "logo.png", height = "80px"),
-          h3(tr("H_01", "Plant Alert: Sentinel Garden Survey"))
+          
+          tags$img(
+            src = "plant_alert_logo.jpg",
+            height = "110px",
+            alt = "Plant Alert logo"
+          ),
+          
+          h3(
+            tr(
+              "H_01",
+              "Plant Alert: Sentinel Garden Survey"
+            )
+          ),
+          
+          div(
+            style = "margin-top: 12px;",
+            
+            tags$img(
+              src = "logo.png",
+              height = "32px",
+              alt = "OneSTOP logo"
+            ),
+            
+            tags$span(
+              style = paste0(
+                "margin-left: 8px;",
+                "color: #6c757d;",
+                "font-size: 0.9rem;",
+                "vertical-align: middle;"
+              ),
+              tr(
+                "UX_PART_OF_ONESTOP",
+                "Part of the OneSTOP project"
+              )
+            )
+          )
         ),
+        
         p(
-          tr("H_02", "Help us understand how garden plants behave and spread."),
+          tr(
+            "H_02",
+            "Help us understand how garden plants behave and spread."
+          ),
           " ",
-          tr("H_03", "This app lets you identify plants, record where you found them and, where relevant, answer a few questions about how they behave in gardens.")
+          tr(
+            "H_03",
+            "This app lets you identify plants, record where you found them and, where relevant, answer a few questions about how they behave in gardens."
+          )
         ),
+        
         hr()
       )
     )
