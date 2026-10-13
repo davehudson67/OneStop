@@ -200,6 +200,36 @@ ensure_db <- function(pool) {
   )
 }
 
+# Run schema checks once per R process rather than once per visitor/session.
+# This is deliberately outside server() so a new user does not trigger DDL/schema work.
+ensure_db(db_pool)
+
+load_public_data <- function(pool) {
+  if (!DBI::dbExistsTable(pool, "observations")) return(data.frame())
+
+  df <- DBI::dbGetQuery(
+    pool,
+    "
+    SELECT
+      id,
+      timestamp,
+      observer_email,
+      site_name,
+      observation_context,
+      latitude,
+      longitude,
+      species_name,
+      inat_id,
+      inat_upload_mode
+    FROM observations
+    ORDER BY timestamp DESC;
+    "
+  )
+
+  as.data.frame(df, stringsAsFactors = FALSE)
+}
+
+# Full records are still fetched directly by the CSV download handler when needed.
 load_data <- function(pool) {
   if (!DBI::dbExistsTable(pool, "observations")) return(data.frame())
   df <- DBI::dbGetQuery(pool, "SELECT * FROM observations ORDER BY timestamp DESC;")
@@ -285,7 +315,12 @@ insert_observation_returning_id <- function(pool, record) {
 }
 
 KEY_FILE <- file.path("data", "plantnet_key.txt")
-PLANTNET_KEY <- if (file.exists(KEY_FILE)) trimws(readr::read_file(KEY_FILE)) else ""
+# Prefer a secret environment variable on hosted platforms such as Connect Cloud.
+# Keep the existing file fallback so current shinyapps.io deployments continue to work.
+PLANTNET_KEY <- Sys.getenv("PLANTNET_KEY")
+if (!nzchar(PLANTNET_KEY) && file.exists(KEY_FILE)) {
+  PLANTNET_KEY <- trimws(readr::read_file(KEY_FILE))
+}
 
 `%||%` <- function(a, b) {
   if (!is.null(a) && length(a) > 0 && !all(is.na(a))) a else b
@@ -1030,7 +1065,6 @@ ui <- fluidPage(
 )
 
 server <- function(input, output, session) {
-  ensure_db(db_pool)
   
   inat_token <- reactiveVal(NULL)
   inat_jwt <- reactiveVal(NULL)
@@ -1038,7 +1072,8 @@ server <- function(input, output, session) {
   project_info <- reactiveVal(NULL)
   
   id_results       <- reactiveVal(NULL)
-  records_data     <- reactiveVal(load_data(db_pool))
+  # Results are loaded lazily only when the user opens the Results tab.
+  records_data     <- reactiveVal(NULL)
   current_location <- reactiveVal(NULL)
   active_photos    <- reactiveVal(NULL)
   admin_unlocked   <- reactiveVal(FALSE)
@@ -1456,17 +1491,16 @@ $(document).on('click', '#show_location_map', function() {
   }, ignoreInit = TRUE)
   
   observeEvent(input$main_tabs, {
-    if (!is.null(input$main_tabs)) active_tab(input$main_tabs)
+    if (!is.null(input$main_tabs)) {
+      active_tab(input$main_tabs)
+
+      if (identical(input$main_tabs, "results") && is.null(records_data())) {
+        records_data(load_public_data(db_pool))
+      }
+    }
   }, ignoreInit = TRUE)
   
-  observe({
-    if (!nzchar(INAT_PROJECT_ID)) {
-      project_info(NULL)
-      return()
-    }
-    pr <- get_inaturalist_project(INAT_PROJECT_ID)
-    if (isTRUE(pr$ok)) project_info(pr$project) else project_info(NULL)
-  })
+  # iNaturalist project metadata is fetched only when a user actually connects.
   
   tr <- function(id, default = NULL) tr_text(id, selected_language(), default)
 
@@ -2031,6 +2065,11 @@ $(document).on('click', '#show_location_map', function() {
     }
     
     inat_jwt(jwt_res$jwt)
+
+    if (is.null(project_info()) && nzchar(INAT_PROJECT_ID)) {
+      pr_res <- get_inaturalist_project(INAT_PROJECT_ID)
+      if (isTRUE(pr_res$ok)) project_info(pr_res$project)
+    }
     
     is_member <- FALSE
     if (nzchar(INAT_PROJECT_ID)) {
@@ -2088,6 +2127,13 @@ $(document).on('click', '#show_location_map', function() {
       return()
     }
     pr <- project_info()
+    if (is.null(pr)) {
+      pr_res <- get_inaturalist_project(INAT_PROJECT_ID)
+      if (isTRUE(pr_res$ok)) {
+        project_info(pr_res$project)
+        pr <- pr_res$project
+      }
+    }
     project_name <- get_project_name(pr, paste("project", INAT_PROJECT_ID))
     
     membership_res <- check_inaturalist_project_membership(jwt, INAT_PROJECT_ID)
@@ -2705,7 +2751,7 @@ $(document).on('click', '#show_location_map', function() {
       
       removeModal()
       pending_delete_id(NULL)
-      records_data(load_data(db_pool))
+      records_data(load_public_data(db_pool))
       
       showNotification(
         sprintf(tr("UX_DELETE_SUCCESS", "Record %s deleted."), delete_id),
@@ -3342,7 +3388,7 @@ $(document).on('click', '#show_location_map', function() {
     # ============================================================
     
     records_data(
-      load_data(db_pool)
+      load_public_data(db_pool)
     )
     
     
@@ -3514,7 +3560,7 @@ $(document).on('click', '#show_location_map', function() {
         n_updated <- n_updated + 1L
       }
     }
-    records_data(load_data(db_pool))
+    records_data(load_public_data(db_pool))
     if (n_updated > 0) {
       showNotification(paste(tr("UX_UPDATED_RECORDS", "Updated"), n_updated, tr("UX_UPDATED_SUFFIX", "record(s) from iNaturalist.")), type = "message")
     } else {
